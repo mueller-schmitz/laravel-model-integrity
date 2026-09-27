@@ -1,0 +1,19 @@
+/vendor/
+/build/
+/coverage/
+composer.lock
+.phpunit.cache/
+.phpunit.result.cache
+.php-cs-fixer.cache
+phpstan.neon
+phpunit.xml
+.env
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Internal working files, never part of the published package
+/CLAUDE.md
+/.claude/
+/tasks/

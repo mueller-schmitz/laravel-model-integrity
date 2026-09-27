@@ -1,0 +1,66 @@
+{
+    "name": "mueller-schmitz/laravel-model-integrity",
+    "description": "Immutable and versioned Eloquent models with a gapless, cryptographically verifiable history.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "laravel",
+        "eloquent",
+        "integrity",
+        "audit",
+        "versioning",
+        "hash-chain",
+        "tamper-evident",
+        "gobd"
+    ],
+    "authors": [
+        {
+            "name": "Müller & Schmitz GmbH",
+            "email": "s.mueller@mueller-schmitz.de"
+        }
+    ],
+    "require": {
+        "php": "^8.3",
+        "illuminate/contracts": "^12.0 || ^13.0",
+        "illuminate/database": "^12.0 || ^13.0",
+        "illuminate/support": "^12.0 || ^13.0"
+    },
+    "require-dev": {
+        "larastan/larastan": "^3.0",
+        "laravel/pint": "^1.20",
+        "orchestra/testbench": "^10.0 || ^11.0",
+        "pestphp/pest": "^4.0 || ^5.0",
+        "pestphp/pest-plugin-laravel": "^4.0 || ^5.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "MuellerSchmitz\\ModelIntegrity\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "MuellerSchmitz\\ModelIntegrity\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "@php vendor/bin/pest",
+        "analyse": "@php vendor/bin/phpstan analyse --memory-limit=1G",
+        "format": "@php vendor/bin/pint",
+        "lint": "@php vendor/bin/pint --test"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "MuellerSchmitz\\ModelIntegrity\\ModelIntegrityServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
