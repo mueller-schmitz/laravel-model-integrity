@@ -16,4 +16,6 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 - Snapshots read from the stored row and normalized by model casts; declared relations included
 - Actor resolution (`ModelIntegrity::actingAs()`), reason and context per write
 - `VersionRecorded` event after commit
+- `IntegrityChecker` (class and facade): `checkModel()`, `checkType()`, `checkChain()`, `checkAll()`, `getHistory()` with per-version `isValid()`, `versionAt()`; detects hash mismatches, broken chains, version and sequence gaps, truncated chains and state drift; `IntegrityViolationDetected` event
+- Model shortcuts `history()`, `verifyIntegrity()`, `versionAt()`
 - Hash format 1: canonical JSON serialization (`CanonicalSerializer`) and SHA-256 envelope hashing (`Hasher`), specified in the README and pinned by reference vectors
