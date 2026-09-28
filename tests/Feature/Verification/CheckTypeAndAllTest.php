@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use MuellerSchmitz\ModelIntegrity\Events\IntegrityViolationDetected;
@@ -11,6 +12,7 @@ use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Tag;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityChecker;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityError;
+use MuellerSchmitz\ModelIntegrity\Verification\IntegrityErrorType;
 
 beforeEach(function (): void {
     $this->checker = app(IntegrityChecker::class);
@@ -108,12 +110,31 @@ describe('checkAll', function (): void {
         ]);
     });
 
-    it('reports versions of unknown model types', function (): void {
+    it('reports versions of unknown model types as unverifiable', function (): void {
         DB::table('integrity_versions')->where('sequence', 4)->update(['versionable_type' => 'App\Models\Removed']);
 
-        $messages = $this->checker->checkAll()->errors()->map(fn (IntegrityError $error): string => (string) $error)->implode("\n");
+        $errors = $this->checker->checkAll()->errors();
+        $unverifiable = $errors->firstWhere('type', IntegrityErrorType::Unverifiable);
 
-        expect($messages)->toContain('App\Models\Removed')->toContain('does not exist');
+        expect($unverifiable)->not->toBeNull()
+            ->and((string) $unverifiable)->toContain('App\Models\Removed')->toContain('does not exist');
+    });
+
+    it('checks versions recorded under a former morph class and reports the mismatch', function (): void {
+        DB::table('integrity_versions')->where('sequence', 1)->update(['snapshot' => '{"total":"9.00"}']);
+        Relation::morphMap(['invoice' => Invoice::class]);
+
+        try {
+            $errors = $this->checker->checkAll()->errors();
+        } finally {
+            Relation::morphMap([], false);
+        }
+
+        $unverifiable = $errors->firstWhere('type', IntegrityErrorType::Unverifiable);
+
+        expect($unverifiable)->not->toBeNull()
+            ->and((string) $unverifiable)->toContain(Invoice::class)->toContain('invoice')
+            ->and(violationsById($errors->where('type', IntegrityErrorType::HashMismatch)))->toBe(['hash_mismatch:'.$this->first->getKey()]);
     });
 
     it('dispatches a single event', function (): void {

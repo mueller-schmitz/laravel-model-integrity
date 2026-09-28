@@ -44,6 +44,18 @@ try {
             // All workers change the same model and compete for its next version.
             Invoice::query()->findOrFail((int) $sharedId)->update(['note' => "worker {$worker} write {$i}"]);
         }
+    } elseif ($mode === 'deletes') {
+        // $sharedId holds comma-separated ids; every worker updates all of them
+        // and finally deletes its own, racing with the others' updates.
+        $ids = array_map(intval(...), explode(',', $sharedId));
+
+        for ($i = 1; $i <= (int) $writes; $i++) {
+            foreach ($ids as $id) {
+                Invoice::query()->find($id)?->update(['note' => "worker {$worker} write {$i}"]);
+            }
+        }
+
+        Invoice::query()->find($ids[(int) $worker - 1])?->delete();
     } else {
         $post = Post::query()->findOrFail((int) $sharedId);
 

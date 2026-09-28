@@ -5,6 +5,8 @@ declare(strict_types=1);
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use MuellerSchmitz\ModelIntegrity\Events\IntegrityViolationDetected;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityChecker;
 
@@ -39,6 +41,15 @@ it('marks versions from the first violation on as invalid', function (): void {
     $history = $this->checker->getHistory($this->invoice, verify: true);
 
     expect($history->map->isValid()->all())->toBe([true, false, false]);
+});
+
+it('dispatches the violation event when verifying the history', function (): void {
+    Event::fake([IntegrityViolationDetected::class]);
+    DB::table('integrity_versions')->where('sequence', 2)->update(['snapshot' => '{"total":"1.00"}']);
+
+    $this->checker->getHistory($this->invoice, verify: true);
+
+    Event::assertDispatched(IntegrityViolationDetected::class, fn (IntegrityViolationDetected $event): bool => $event->model?->is($this->invoice) === true);
 });
 
 it('finds the version valid at a point in time', function (string $date, ?int $expected): void {

@@ -68,6 +68,18 @@ it('detects removed versions', function (int $sequence): void {
     expect(chainViolations($this->checker->checkChain()))->toBe(["sequence_gap:{$sequence}"]);
 })->with([1, 2, 3]);
 
+it('reports a large gap as one range instead of one error per sequence', function (): void {
+    seedChain();
+    DB::table('integrity_versions')->where('sequence', 4)->update(['sequence' => 1000000000]);
+    DB::table('integrity_heads')->update(['sequence' => 1000000000]);
+
+    $gaps = $this->checker->checkChain()->errors()->filter(fn (IntegrityError $error): bool => $error->type->value === 'sequence_gap');
+
+    expect($gaps)->toHaveCount(1)
+        ->and($gaps->first()->sequence)->toBe(4)
+        ->and($gaps->first()->message)->toBe('Sequences 4 to 999999999 are missing.');
+});
+
 it('detects a removed end of the chain', function (): void {
     seedChain();
     DB::table('integrity_versions')->where('sequence', '>=', 3)->delete();

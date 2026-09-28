@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace MuellerSchmitz\ModelIntegrity\Verification;
 
 use Carbon\CarbonImmutable;
+use Closure;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -25,8 +26,12 @@ use MuellerSchmitz\ModelIntegrity\Recording\ModelOptions;
 use MuellerSchmitz\ModelIntegrity\Recording\SnapshotBuilder;
 
 /**
- * Verifies recorded versions, both chains, the chain head and the current
+ * Verifies recorded versions, both chains, the chain heads and the current
  * state of models.
+ *
+ * Every check runs in a read transaction with a consistent view (REPEATABLE
+ * READ), so versions recorded while a check runs are either entirely visible
+ * or not at all; the recorder commits row, version and heads together.
  *
  * A broken link between two versions is reported by both neighbours with the
  * same message and merged. It invalidates the older version when the newer one
@@ -38,7 +43,10 @@ class IntegrityChecker
 {
     private const string UNRECORDED_MESSAGE = 'The model exists, but no version has been recorded.';
 
-    /** @var array<int, bool> hash validity by sequence, per check */
+    /** Versions loaded per query; keeps memory and the number of bindings bounded. */
+    private const int CHUNK = 500;
+
+    /** @var array<int, bool> hash validity by sequence, per model check */
     private array $validHashes = [];
 
     public function __construct(
@@ -48,7 +56,9 @@ class IntegrityChecker
 
     public function checkModel(Model $model): IntegrityResult
     {
-        $result = $this->inspectModel($model);
+        $this->assertTracked($model);
+
+        $result = $this->consistently(fn (): IntegrityResult => $this->inspectModel($model));
 
         $this->dispatchOnFailure($result, $model);
 
@@ -57,7 +67,8 @@ class IntegrityChecker
 
     /**
      * All versions of the model, oldest first. With $verify, each version's
-     * isValid() tells whether the chain is intact up to that version.
+     * isValid() tells whether the chain is intact up to that version; violations
+     * dispatch IntegrityViolationDetected like checkModel().
      *
      * @return Collection<int, Version>
      */
@@ -68,7 +79,7 @@ class IntegrityChecker
         $versions = $this->versionsOf($model)->get();
 
         if ($verify) {
-            $lastValid = $this->inspectModel($model)->lastValidVersion() ?? 0;
+            $lastValid = $this->checkModel($model)->lastValidVersion() ?? 0;
             $versions->each(fn (Version $version): Version => $version->markValidity($version->version <= $lastValid));
         }
 
@@ -102,7 +113,11 @@ class IntegrityChecker
      */
     public function checkType(string $class, bool $stopOnFirstFailure = false): IntegrityResult
     {
-        $result = $this->inspectType($class, $stopOnFirstFailure);
+        if (! $this->isTracked($class)) {
+            throw IntegrityConfigurationException::notTracked($class);
+        }
+
+        $result = $this->consistently(fn (): IntegrityResult => $this->inspectType($class, null, $stopOnFirstFailure));
 
         $this->dispatchOnFailure($result, null);
 
@@ -119,35 +134,25 @@ class IntegrityChecker
      */
     public function checkAll(bool $stopOnFirstFailure = false): IntegrityResult
     {
-        $chain = $this->inspectChain();
-        $results = [$chain];
+        $result = $this->consistently(function () use ($stopOnFirstFailure): IntegrityResult {
+            $chain = $this->inspectChain();
 
-        if ($stopOnFirstFailure && $chain->fails()) {
-            $this->dispatchOnFailure($chain, null);
-
-            return $chain;
-        }
-
-        foreach (Version::query()->distinct()->orderBy('versionable_type')->pluck('versionable_type') as $type) {
-            $type = is_string($type) ? $type : '';
-            $class = Relation::getMorphedModel($type) ?? $type;
-
-            if (! class_exists($class) || ! is_subclass_of($class, Model::class) || ! $this->isTracked($class)) {
-                $results[] = new IntegrityResult([$this->error(
-                    IntegrityErrorType::StateDrift,
-                    "Model class [{$class}] does not exist or does not use HasIntegrity; its state was not checked.",
-                    [$type, null],
-                )], 0, null);
-            } else {
-                $results[] = $this->inspectType($class, $stopOnFirstFailure);
+            if ($stopOnFirstFailure && $chain->fails()) {
+                return $chain;
             }
 
-            if ($stopOnFirstFailure && end($results)->fails()) {
-                break;
-            }
-        }
+            $results = [$chain];
 
-        $result = IntegrityResult::combine($results, $chain->checkedVersions());
+            foreach ($this->recordedTypes() as $type) {
+                $results[] = $this->inspectRecordedType($type, $stopOnFirstFailure);
+
+                if ($stopOnFirstFailure && end($results)->fails()) {
+                    break;
+                }
+            }
+
+            return IntegrityResult::combine($results, $chain->checkedVersions());
+        });
 
         $this->dispatchOnFailure($result, null);
 
@@ -155,30 +160,123 @@ class IntegrityChecker
     }
 
     /**
+     * Verifies the global chain over all models: hashes, a gapless sequence,
+     * the links between consecutive versions and the head.
+     */
+    public function checkChain(): IntegrityResult
+    {
+        $result = $this->consistently(fn (): IntegrityResult => $this->inspectChain());
+
+        $this->dispatchOnFailure($result, null);
+
+        return $result;
+    }
+
+    /**
+     * The stored model with the given key, or a key-only instance if the row
+     * no longer exists, so deleted models can be checked as well.
+     *
      * @param  class-string<Model>  $class
      */
-    protected function inspectType(string $class, bool $stopOnFirstFailure = false): IntegrityResult
+    public function findModel(string $class, int|string $id): Model
     {
         if (! $this->isTracked($class)) {
             throw IntegrityConfigurationException::notTracked($class);
         }
 
         $prototype = new $class;
+
+        return $class::query()->withoutGlobalScopes()->find($id) ?? $this->keyOnlyInstance($prototype, $id);
+    }
+
+    /**
+     * Runs the callback in a read transaction with a consistent view. Inside a
+     * caller's transaction the caller's isolation level applies.
+     *
+     * @template TResult
+     *
+     * @param  Closure(): TResult  $callback
+     * @return TResult
+     */
+    protected function consistently(Closure $callback): mixed
+    {
+        $connection = DB::connection($this->connection());
+        $driver = $connection->getDriverName();
+        $outermost = $connection->transactionLevel() === 0;
+
+        // MySQL and MariaDB apply the level to the next transaction only.
+        if ($outermost && in_array($driver, ['mysql', 'mariadb'], true)) {
+            $connection->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        }
+
+        return $connection->transaction(function () use ($connection, $driver, $outermost, $callback): mixed {
+            // PostgreSQL defaults to READ COMMITTED; set before the first query.
+            if ($outermost && $driver === 'pgsql') {
+                $connection->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+            }
+
+            return $callback();
+        });
+    }
+
+    /**
+     * A recorded morph type: its class, or the reason it cannot be checked.
+     */
+    private function inspectRecordedType(string $type, bool $stopOnFirstFailure): IntegrityResult
+    {
+        $class = Relation::getMorphedModel($type) ?? $type;
+
+        if (! class_exists($class) || ! is_subclass_of($class, Model::class) || ! $this->isTracked($class)) {
+            return new IntegrityResult([$this->error(
+                IntegrityErrorType::Unverifiable,
+                "Model class [{$class}] does not exist or does not use HasIntegrity; its versions and state were not checked.",
+                [$type, null],
+            )], 0, null);
+        }
+
+        $currentType = (new $class)->getMorphClass();
+
+        if ($currentType === $type) {
+            return $this->inspectType($class, null, $stopOnFirstFailure);
+        }
+
+        // Versions were recorded under a former morph class (e.g. before a morph
+        // map was introduced). Their chains are checked under that type.
+        $results = [
+            new IntegrityResult([$this->error(
+                IntegrityErrorType::Unverifiable,
+                "Versions of [{$class}] were recorded under morph class [{$type}], but the model now uses [{$currentType}]. Their chains were checked; new versions start a separate history.",
+                [$type, null],
+            )], 0, null),
+            $this->inspectType($class, $type, $stopOnFirstFailure),
+        ];
+
+        return IntegrityResult::combine($results, $results[1]->checkedVersions());
+    }
+
+    /**
+     * @param  class-string<Model>  $class
+     * @param  string|null  $type  the morph type the versions were recorded under, if it differs from the model's
+     */
+    protected function inspectType(string $class, ?string $type, bool $stopOnFirstFailure = false): IntegrityResult
+    {
+        $prototype = new $class;
+        $type ??= $prototype->getMorphClass();
         $keyName = $prototype->getKeyName();
         $castKey = fn (string $id): int|string => in_array($prototype->getKeyType(), ['int', 'integer'], true) ? (int) $id : $id;
 
         /** @var list<string> $ids */
         $ids = Version::query()
-            ->where('versionable_type', $prototype->getMorphClass())
+            ->where('versionable_type', $type)
             ->distinct()
             ->pluck('versionable_id')
             ->map(fn (mixed $id): string => is_scalar($id) ? (string) $id : '')
             ->all();
 
-        $results = [];
+        $errors = [];
         $checked = 0;
 
-        foreach (array_chunk($ids, 500) as $chunk) {
+        foreach (array_chunk($ids, self::CHUNK) as $chunk) {
             $models = $class::query()
                 ->withoutGlobalScopes()
                 ->whereIn($keyName, array_map($castKey, $chunk))
@@ -188,65 +286,49 @@ class IntegrityChecker
             foreach ($chunk as $id) {
                 $model = $models->get($id) ?? $this->keyOnlyInstance($prototype, $castKey($id));
 
-                $result = $this->inspectModel($model);
-                $results[] = $result;
+                $result = $this->inspectModel($model, $type);
                 $checked += $result->checkedVersions();
+                array_push($errors, ...$result->errors()->all());
 
                 if ($stopOnFirstFailure && $result->fails()) {
-                    return IntegrityResult::combine($results, $checked);
+                    return new IntegrityResult($errors, $checked, null);
                 }
             }
         }
 
-        $recorded = array_flip($ids);
-        $unrecorded = [];
+        // Rows without any version are only meaningful under the model's current type.
+        if ($type === $prototype->getMorphClass()) {
+            $recorded = array_flip($ids);
 
-        foreach ($class::query()->withoutGlobalScopes()->select($keyName)->lazyById(1000, $keyName) as $model) {
-            if (! isset($recorded[$this->key($model)])) {
-                $unrecorded[] = $this->error(
-                    IntegrityErrorType::StateDrift,
-                    self::UNRECORDED_MESSAGE,
-                    [$prototype->getMorphClass(), $this->key($model)],
-                );
+            foreach ($class::query()->withoutGlobalScopes()->select($keyName)->lazyById(1000, $keyName) as $model) {
+                if (! isset($recorded[$this->key($model)])) {
+                    $errors[] = $this->error(IntegrityErrorType::StateDrift, self::UNRECORDED_MESSAGE, [$type, $this->key($model)]);
 
-                if ($stopOnFirstFailure) {
-                    break;
+                    if ($stopOnFirstFailure) {
+                        break;
+                    }
                 }
             }
         }
 
-        $results[] = new IntegrityResult($unrecorded, 0, null);
-
-        return IntegrityResult::combine($results, $checked);
-    }
-
-    /**
-     * Verifies the global chain over all models: hashes, a gapless sequence,
-     * the links between consecutive versions and the head.
-     */
-    public function checkChain(): IntegrityResult
-    {
-        $result = $this->inspectChain();
-
-        $this->dispatchOnFailure($result, null);
-
-        return $result;
+        return new IntegrityResult($errors, $checked, null);
     }
 
     protected function inspectChain(): IntegrityResult
     {
+        $head = $this->head(ChainName::GLOBAL);
         $errors = [];
         $count = 0;
         $previous = null;
 
-        // A cursor keeps memory constant; only the previous version is held.
-        foreach (Version::query()->orderBy('sequence')->cursor() as $version) {
+        // Batched by sequence: memory stays bounded and only the previous version is held.
+        foreach (Version::query()->orderBy('sequence')->lazyById(self::CHUNK, 'sequence') as $version) {
             $count++;
             $subject = [$version->versionable_type, $version->versionable_id];
             $hashIsValid = $this->computeHashValidity($version);
 
-            for ($missing = ($previous->sequence ?? 0) + 1; $missing < $version->sequence; $missing++) {
-                $errors[] = $this->gapError([null, null], $missing);
+            if ($version->sequence > ($previous->sequence ?? 0) + 1) {
+                $errors[] = $this->gapError([null, null], ($previous->sequence ?? 0) + 1, $version->sequence - 1);
             }
 
             if (! $hashIsValid) {
@@ -264,7 +346,6 @@ class IntegrityChecker
             $previous = $version;
         }
 
-        $head = $this->head(ChainName::GLOBAL);
         $lastSequence = $previous->sequence ?? 0;
 
         if ($head === null) {
@@ -284,147 +365,209 @@ class IntegrityChecker
         return new IntegrityResult($errors, $count, null);
     }
 
-    protected function inspectModel(Model $model): IntegrityResult
+    /**
+     * @param  string|null  $type  the morph type the versions were recorded under, if it differs from the model's
+     */
+    protected function inspectModel(Model $model, ?string $type = null): IntegrityResult
     {
-        $this->assertTracked($model);
         $this->validHashes = [];
 
-        $versions = $this->versionsOf($model)->get();
-
-        $subject = [$model->getMorphClass(), $this->key($model)];
-        $errors = [];
-        $invalid = [];
-
-        $this->checkVersionsOfModel($versions, $subject, $errors, $invalid);
-        $this->checkGlobalNeighbours($versions, $subject, $errors, $invalid);
-        $this->checkModelHead($model, $versions->last(), $subject, $errors);
-        $this->checkState($model, $versions->last(), $subject, $errors);
-
-        return new IntegrityResult($errors, $versions->count(), $this->lastValidVersion($versions, $invalid));
-    }
-
-    /**
-     * Hashes, version numbering and the per-model chain.
-     *
-     * @param  Collection<int, Version>  $versions
-     * @param  array{string|null, string|null}  $subject
-     * @param  list<IntegrityError>  $errors
-     * @param  array<int, true>  $invalid  invalid version numbers
-     */
-    private function checkVersionsOfModel(Collection $versions, array $subject, array &$errors, array &$invalid): void
-    {
-        $previous = null;
-
-        foreach ($versions as $version) {
-            $expected = $previous === null ? 1 : $previous->version + 1;
-
-            if (! $this->hashIsValid($version)) {
-                $errors[] = $this->error(IntegrityErrorType::HashMismatch, $this->hashMessage($version), $subject, $version->version, $version->sequence);
-                $invalid[$version->version] = true;
-            }
-
-            if ($version->version !== $expected) {
-                $errors[] = $this->error(
-                    IntegrityErrorType::VersionGap,
-                    "Expected version {$expected}, found version {$version->version}.",
-                    $subject,
-                    $version->version,
-                    $version->sequence,
-                );
-            } elseif ($version->prev_hash !== $previous?->hash) {
-                // Not checked across a version gap, which is reported already.
-                $blamed = $previous !== null && $this->hashIsValid($version) ? $previous : $version;
-                $errors[] = $this->error(
-                    IntegrityErrorType::BrokenChain,
-                    "prev_hash of version {$version->version} does not reference version ".($version->version - 1).'.',
-                    $subject,
-                    $blamed->version,
-                    $version->sequence,
-                );
-                $invalid[$blamed->version] = true;
-            }
-
-            $previous = $version;
-        }
-    }
-
-    /**
-     * The global chain around each version of the model, and the head.
-     *
-     * @param  Collection<int, Version>  $versions
-     * @param  array{string|null, string|null}  $subject
-     * @param  list<IntegrityError>  $errors
-     * @param  array<int, true>  $invalid
-     */
-    private function checkGlobalNeighbours(Collection $versions, array $subject, array &$errors, array &$invalid): void
-    {
-        if ($versions->isEmpty()) {
-            return;
-        }
-
-        $sequences = $versions->map(fn (Version $version): int => $version->sequence);
-        $neighbours = Version::query()
-            ->whereIn('sequence', $sequences->map(fn (int $s): int => $s - 1)->merge($sequences->map(fn (int $s): int => $s + 1))->unique()->values())
-            ->get()
-            ->keyBy('sequence');
-        $own = $versions->keyBy('sequence');
-        $all = $neighbours->union($own);
-
+        $type ??= $model->getMorphClass();
+        $id = $this->key($model);
+        $subject = [$type, $id];
         $head = $this->head(ChainName::GLOBAL);
         $maxSequence = $this->maxSequence();
+
+        $errors = [];
+        $invalid = [];
+        $count = 0;
+        $previous = null;
+        $lastValid = null;
+        $chainIntact = true;
 
         if ($head === null) {
             $errors[] = $this->error(IntegrityErrorType::TruncatedChain, 'The global chain head is missing.', $subject);
         }
 
-        foreach ($versions as $version) {
-            $sequence = $version->sequence;
+        // Versions and sequences grow together, so batching by sequence yields version order.
+        $versions = $this->versionsOf($model, $type)->reorder()->lazyById(self::CHUNK, 'sequence');
 
-            // Link to the predecessor.
-            if ($sequence === 1) {
-                if ($version->global_prev_hash !== null) {
-                    $errors[] = $this->globalLinkError($subject, $version, null);
-                }
-            } elseif (($predecessor = $all->get($sequence - 1)) === null) {
-                $errors[] = $this->gapError($subject, $sequence - 1);
-            } elseif ($version->global_prev_hash !== $predecessor->hash) {
-                $errors[] = $this->globalLinkError($subject, $version, $this->blame($predecessor, $version, $own));
-            }
+        foreach ($versions->chunk(self::CHUNK) as $lazyChunk) {
+            $chunk = $lazyChunk->collect();
+            $count += $chunk->count();
+            $neighbours = $this->neighboursOf($chunk);
 
-            // Link to the successor, or the head for the last entry.
-            if (($successor = $all->get($sequence + 1)) !== null) {
-                if ($successor->global_prev_hash !== $version->hash) {
-                    $errors[] = $this->globalLinkError($subject, $successor, $this->blame($version, $successor, $own));
+            foreach ($chunk as $version) {
+                $this->checkVersionOfModel($version, $previous, $subject, $errors, $invalid);
+                $this->checkGlobalNeighbours($version, $neighbours, $subject, $head, $maxSequence, $errors, $invalid);
+
+                $chainIntact = $chainIntact
+                    && $version->version === ($previous->version ?? 0) + 1
+                    && ! isset($invalid[$version->version]);
+
+                if ($chainIntact) {
+                    $lastValid = $version->version;
                 }
-            } elseif ($head === null) {
-                // Reported once above.
-            } elseif ($head['sequence'] > $sequence) {
-                $errors[] = $maxSequence === $sequence
-                    ? $this->truncatedError($subject, $head['sequence'], $sequence)
-                    : $this->gapError($subject, $sequence + 1);
-            } elseif ($head['sequence'] < $sequence || $head['hash'] !== $version->hash) {
-                $errors[] = $this->headError($subject, $head, $sequence);
+
+                $previous = $version;
             }
         }
 
-        // Blamed versions of broken global links are invalid.
+        // Versions blamed for a broken global link are invalid as well.
+        $lastValid = $this->lastValidBelow($lastValid, $errors, $invalid);
+
+        $this->checkModelHead($type, $id, $previous, $subject, $errors);
+        $this->checkState($model, $previous, $subject, $errors);
+
+        return new IntegrityResult($errors, $count, $lastValid);
+    }
+
+    /**
+     * Hash, version numbering and the per-model link of one version.
+     *
+     * @param  array{string|null, string|null}  $subject
+     * @param  list<IntegrityError>  $errors
+     * @param  array<int, true>  $invalid  invalid version numbers
+     */
+    private function checkVersionOfModel(Version $version, ?Version $previous, array $subject, array &$errors, array &$invalid): void
+    {
+        $expected = $previous === null ? 1 : $previous->version + 1;
+
+        if (! $this->hashIsValid($version)) {
+            $errors[] = $this->error(IntegrityErrorType::HashMismatch, $this->hashMessage($version), $subject, $version->version, $version->sequence);
+            $invalid[$version->version] = true;
+        }
+
+        if ($version->version !== $expected) {
+            $errors[] = $this->error(
+                IntegrityErrorType::VersionGap,
+                "Expected version {$expected}, found version {$version->version}.",
+                $subject,
+                $version->version,
+                $version->sequence,
+            );
+        } elseif ($version->prev_hash !== $previous?->hash) {
+            // Not checked across a version gap, which is reported already.
+            $blamed = $previous !== null && $this->hashIsValid($version) ? $previous : $version;
+            $errors[] = $this->error(
+                IntegrityErrorType::BrokenChain,
+                "prev_hash of version {$version->version} does not reference version ".($version->version - 1).'.',
+                $subject,
+                $blamed->version,
+                $version->sequence,
+            );
+            $invalid[$blamed->version] = true;
+        }
+    }
+
+    /**
+     * The global chain around one version of the model, and the head for the last entry.
+     *
+     * @param  Collection<int, Version>  $neighbours  versions by sequence: the chunk and its neighbours
+     * @param  array{string|null, string|null}  $subject
+     * @param  array{sequence: int, hash: string|null}|null  $head
+     * @param  list<IntegrityError>  $errors
+     * @param  array<int, true>  $invalid
+     */
+    private function checkGlobalNeighbours(Version $version, Collection $neighbours, array $subject, ?array $head, int $maxSequence, array &$errors, array &$invalid): void
+    {
+        $sequence = $version->sequence;
+
+        // Link to the predecessor.
+        if ($sequence === 1) {
+            if ($version->global_prev_hash !== null) {
+                $errors[] = $this->globalLinkError($subject, $version, null);
+            }
+        } elseif (($predecessor = $neighbours->get($sequence - 1)) === null) {
+            $errors[] = $this->gapError($subject, $sequence - 1, $sequence - 1);
+        } elseif ($version->global_prev_hash !== $predecessor->hash) {
+            $errors[] = $this->globalLinkError($subject, $version, $this->blame($predecessor, $version, $subject));
+        }
+
+        // Link to the successor, or the head for the last entry.
+        if (($successor = $neighbours->get($sequence + 1)) !== null) {
+            if ($successor->global_prev_hash !== $version->hash) {
+                $blamed = $this->blame($version, $successor, $subject);
+                $errors[] = $this->globalLinkError($subject, $successor, $blamed);
+
+                if ($blamed !== null) {
+                    $invalid[$blamed] = true;
+                }
+            }
+        } elseif ($head === null) {
+            // Reported once by the caller.
+        } elseif ($head['sequence'] > $sequence) {
+            $errors[] = $maxSequence === $sequence
+                ? $this->truncatedError($subject, $head['sequence'], $sequence)
+                : $this->gapError($subject, $sequence + 1, $sequence + 1);
+        } elseif ($head['sequence'] < $sequence || $head['hash'] !== $version->hash) {
+            $errors[] = $this->headError($subject, $head, $sequence);
+        }
+    }
+
+    /**
+     * The chunk's versions plus the versions directly before and after each of
+     * them, keyed by sequence. Two bindings per version keep the query small.
+     *
+     * @param  Collection<int, Version>  $chunk
+     * @return Collection<int, Version>
+     */
+    private function neighboursOf(Collection $chunk): Collection
+    {
+        $sequences = $chunk->map(fn (Version $version): int => $version->sequence);
+        $wanted = $sequences->map(fn (int $s): int => $s - 1)
+            ->merge($sequences->map(fn (int $s): int => $s + 1))
+            ->diff($sequences)
+            ->filter(fn (int $s): bool => $s > 0)
+            ->unique()
+            ->values();
+
+        /** @var Collection<int, Version> $neighbours */
+        $neighbours = $wanted->isEmpty()
+            ? new Collection
+            : Version::query()->whereIn('sequence', $wanted->all())->get();
+
+        return $neighbours->merge($chunk)->keyBy('sequence');
+    }
+
+    /**
+     * The version number of the checked model to blame for a broken global
+     * link from $older to $newer, or null if the newer version explains it or
+     * the older one belongs to another model.
+     *
+     * @param  array{string|null, string|null}  $subject
+     */
+    private function blame(Version $older, Version $newer, array $subject): ?int
+    {
+        $ownOlder = $older->versionable_type === $subject[0] && $older->versionable_id === $subject[1];
+
+        return $ownOlder && $this->hashIsValid($newer) ? $older->version : null;
+    }
+
+    /**
+     * The highest version n for which versions 1..n carry no violation,
+     * including versions blamed for broken global links.
+     *
+     * @param  list<IntegrityError>  $errors
+     * @param  array<int, true>  $invalid
+     */
+    private function lastValidBelow(?int $lastValid, array $errors, array $invalid): ?int
+    {
         foreach ($errors as $error) {
             if ($error->type === IntegrityErrorType::BrokenChain && $error->version !== null) {
                 $invalid[$error->version] = true;
             }
         }
-    }
 
-    /**
-     * The version number of this model to blame for a broken global link from
-     * $older to $newer, or null if the newer version explains it or the older
-     * one belongs to another model.
-     *
-     * @param  Collection<int, Version>  $own  versions of the checked model by sequence
-     */
-    private function blame(Version $older, Version $newer, Collection $own): ?int
-    {
-        return $this->hashIsValid($newer) && $own->has($older->sequence) ? $older->version : null;
+        $invalidVersions = array_keys($invalid);
+        sort($invalidVersions);
+        $firstInvalid = $invalidVersions[0] ?? null;
+
+        if ($firstInvalid !== null && ($lastValid === null || $firstInvalid <= $lastValid)) {
+            $lastValid = $firstInvalid > 1 ? $firstInvalid - 1 : null;
+        }
+
+        return $lastValid;
     }
 
     /**
@@ -433,9 +576,9 @@ class IntegrityChecker
      * @param  array{string|null, string|null}  $subject
      * @param  list<IntegrityError>  $errors
      */
-    private function checkModelHead(Model $model, ?Version $last, array $subject, array &$errors): void
+    private function checkModelHead(string $type, string $id, ?Version $last, array $subject, array &$errors): void
     {
-        $head = $this->head(ChainName::forModel($model));
+        $head = $this->head(ChainName::for($type, $id));
 
         $message = match (true) {
             $head === null && $last === null => null,
@@ -520,27 +663,6 @@ class IntegrityChecker
         return $changed;
     }
 
-    /**
-     * @param  Collection<int, Version>  $versions
-     * @param  array<int, true>  $invalid
-     */
-    private function lastValidVersion(Collection $versions, array $invalid): ?int
-    {
-        $lastValid = null;
-        $expected = 1;
-
-        foreach ($versions as $version) {
-            if ($version->version !== $expected || isset($invalid[$version->version])) {
-                break;
-            }
-
-            $lastValid = $version->version;
-            $expected++;
-        }
-
-        return $lastValid;
-    }
-
     protected function hashIsValid(Version $version): bool
     {
         return $this->validHashes[$version->sequence] ??= $this->computeHashValidity($version);
@@ -579,11 +701,15 @@ class IntegrityChecker
     }
 
     /**
+     * A range of missing sequences, reported as one error.
+     *
      * @param  array{string|null, string|null}  $subject
      */
-    protected function gapError(array $subject, int $missingSequence): IntegrityError
+    protected function gapError(array $subject, int $from, int $to): IntegrityError
     {
-        return $this->error(IntegrityErrorType::SequenceGap, "Sequence {$missingSequence} is missing.", $subject, null, $missingSequence);
+        $message = $from === $to ? "Sequence {$from} is missing." : "Sequences {$from} to {$to} are missing.";
+
+        return $this->error(IntegrityErrorType::SequenceGap, $message, $subject, null, $from);
     }
 
     /**
@@ -650,6 +776,22 @@ class IntegrityChecker
         return is_numeric($max) ? (int) $max : 0;
     }
 
+    /**
+     * @return list<string>
+     */
+    private function recordedTypes(): array
+    {
+        $types = [];
+
+        foreach (Version::query()->distinct()->orderBy('versionable_type')->pluck('versionable_type') as $type) {
+            if (is_string($type)) {
+                $types[] = $type;
+            }
+        }
+
+        return $types;
+    }
+
     protected function connection(): ?string
     {
         $connection = config('model-integrity.connection');
@@ -676,23 +818,6 @@ class IntegrityChecker
         return in_array(HasIntegrity::class, class_uses_recursive($class), true);
     }
 
-    /**
-     * The stored model with the given key, or a key-only instance if the row
-     * no longer exists, so deleted models can be checked as well.
-     *
-     * @param  class-string<Model>  $class
-     */
-    public function findModel(string $class, int|string $id): Model
-    {
-        if (! $this->isTracked($class)) {
-            throw IntegrityConfigurationException::notTracked($class);
-        }
-
-        $prototype = new $class;
-
-        return $class::query()->withoutGlobalScopes()->find($id) ?? $this->keyOnlyInstance($prototype, $id);
-    }
-
     protected function keyOnlyInstance(Model $prototype, int|string $id): Model
     {
         return $prototype->newInstance()->forceFill([$prototype->getKeyName() => $id]);
@@ -701,10 +826,10 @@ class IntegrityChecker
     /**
      * @return Builder<Version>
      */
-    protected function versionsOf(Model $model): Builder
+    protected function versionsOf(Model $model, ?string $type = null): Builder
     {
         return Version::query()
-            ->where('versionable_type', $model->getMorphClass())
+            ->where('versionable_type', $type ?? $model->getMorphClass())
             ->where('versionable_id', $this->key($model))
             ->orderBy('version');
     }

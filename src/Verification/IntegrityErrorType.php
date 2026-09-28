@@ -23,4 +23,7 @@ enum IntegrityErrorType: string
 
     /** The current model row does not match the last recorded snapshot. */
     case StateDrift = 'state_drift';
+
+    /** Versions exist whose model class is missing, untracked or recorded under a former morph class. */
+    case Unverifiable = 'unverifiable';
 }
