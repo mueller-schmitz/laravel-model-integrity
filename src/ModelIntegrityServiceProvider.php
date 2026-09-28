@@ -11,6 +11,7 @@ use Illuminate\Support\ServiceProvider;
 use MuellerSchmitz\ModelIntegrity\Console\GrantsCommand;
 use MuellerSchmitz\ModelIntegrity\Console\InstallCommand;
 use MuellerSchmitz\ModelIntegrity\Console\SnapshotCommand;
+use MuellerSchmitz\ModelIntegrity\Console\TriggersCommand;
 use MuellerSchmitz\ModelIntegrity\Console\VerifyCommand;
 use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
@@ -46,6 +47,7 @@ class ModelIntegrityServiceProvider extends ServiceProvider
             GrantsCommand::class,
             InstallCommand::class,
             SnapshotCommand::class,
+            TriggersCommand::class,
             VerifyCommand::class,
         ]);
 

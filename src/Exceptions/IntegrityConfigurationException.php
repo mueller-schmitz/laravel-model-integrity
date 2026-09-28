@@ -21,7 +21,11 @@ class IntegrityConfigurationException extends LogicException
 
     public static function rowMissing(Model $model): self
     {
-        return new self(sprintf('No stored row found for [%s] with key [%s].', $model::class, json_encode($model->getKey())));
+        return new self(sprintf(
+            'No stored row found for [%s] with key [%s]. The row may have been deleted concurrently; lock rows that may be deleted before updating them.',
+            $model::class,
+            json_encode($model->getKey()),
+        ));
     }
 
     public static function connectionMismatch(Model $model, string $modelConnection, string $integrityConnection): self

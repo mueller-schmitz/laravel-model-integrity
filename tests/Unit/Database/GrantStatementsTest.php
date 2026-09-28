@@ -36,6 +36,16 @@ it('replaces database-wide privileges by table privileges on MySQL', function ()
     ]);
 });
 
+it('keeps read access to views when replacing database-wide privileges', function (): void {
+    $lines = $this->grants->build('mysql', 'app', '%', 'shop', 'integrity_versions', 'integrity_heads', ['invoices'], allTables: true, views: ['invoice_totals']);
+
+    expect(sqlOnly($lines))->toContain("GRANT SELECT ON `shop`.`invoice_totals` TO 'app'@'%';");
+});
+
+it('rejects an empty user', function (string $driver): void {
+    $this->grants->build($driver, '', '%', 'shop', 'integrity_versions', 'integrity_heads');
+})->with(['mysql', 'pgsql'])->throws(InvalidArgumentException::class, 'user');
+
 it('restricts table privileges on PostgreSQL', function (): void {
     $lines = $this->grants->build('pgsql', 'app', '%', 'shop', 'integrity_versions', 'integrity_heads');
 
@@ -47,7 +57,7 @@ it('restricts table privileges on PostgreSQL', function (): void {
         'GRANT SELECT, INSERT, UPDATE ON TABLE "integrity_heads" TO "app";',
     ]);
 
-    expect(implode("\n", $lines))->toContain('must not own');
+    expect(implode("\n", $lines))->toContain('must not own')->toContain('USAGE ON SCHEMA');
 });
 
 it('explains that SQLite has no privileges', function (): void {

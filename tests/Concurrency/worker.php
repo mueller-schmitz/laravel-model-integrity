@@ -51,11 +51,13 @@ try {
 
         for ($i = 1; $i <= (int) $writes; $i++) {
             foreach ($ids as $id) {
-                Invoice::query()->find($id)?->update(['note' => "worker {$worker} write {$i}"]);
+                // Lock the row first: a plain find() may return a model whose row
+                // another worker deletes before the update runs.
+                DB::transaction(fn () => Invoice::query()->lockForUpdate()->find($id)?->update(['note' => "worker {$worker} write {$i}"]));
             }
         }
 
-        Invoice::query()->find($ids[(int) $worker - 1])?->delete();
+        DB::transaction(fn () => Invoice::query()->lockForUpdate()->find($ids[(int) $worker - 1])?->delete());
     } else {
         $post = Post::query()->findOrFail((int) $sharedId);
 

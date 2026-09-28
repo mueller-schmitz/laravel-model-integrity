@@ -24,7 +24,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        if (Config::boolean('model-integrity.append_only_triggers', true)) {
+        // Accepts "false"/"0" from the environment as well as booleans.
+        if (filter_var(config('model-integrity.append_only_triggers', true), FILTER_VALIDATE_BOOL)) {
             app(AppendOnlyTriggers::class)->install($this->connection(), $this->table());
         }
     }

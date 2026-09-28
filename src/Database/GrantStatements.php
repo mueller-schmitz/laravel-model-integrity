@@ -15,6 +15,7 @@ class GrantStatements
 {
     /**
      * @param  list<string>  $otherTables  all other tables of the database (MySQL/MariaDB with $allTables)
+     * @param  list<string>  $views  all views of the database (MySQL/MariaDB with $allTables)
      * @return list<string>
      */
     public function build(
@@ -26,9 +27,14 @@ class GrantStatements
         string $headsTable,
         array $otherTables = [],
         bool $allTables = false,
+        array $views = [],
     ): array {
+        if ($user === '' && $driver !== 'sqlite') {
+            throw new InvalidArgumentException('The database user must not be empty.');
+        }
+
         return match ($driver) {
-            'mysql', 'mariadb' => $this->mysql($user, $host, $database, $versionsTable, $headsTable, $otherTables, $allTables),
+            'mysql', 'mariadb' => $this->mysql($user, $host, $database, $versionsTable, $headsTable, $otherTables, $views, $allTables),
             'pgsql' => $this->pgsql($user, $versionsTable, $headsTable),
             'sqlite' => [
                 '-- SQLite has no users or privileges.',
@@ -40,9 +46,10 @@ class GrantStatements
 
     /**
      * @param  list<string>  $otherTables
+     * @param  list<string>  $views
      * @return list<string>
      */
-    private function mysql(string $user, string $host, string $database, string $versions, string $heads, array $otherTables, bool $allTables): array
+    private function mysql(string $user, string $host, string $database, string $versions, string $heads, array $otherTables, array $views, bool $allTables): array
     {
         $grantee = $this->mysqlString($user).'@'.$this->mysqlString($host);
         $table = fn (string $name): string => $this->mysqlIdentifier($database).'.'.$this->mysqlIdentifier($name);
@@ -62,6 +69,12 @@ class GrantStatements
             foreach ($otherTables as $other) {
                 $lines[] = "GRANT SELECT, INSERT, UPDATE, DELETE ON {$table($other)} TO {$grantee};";
             }
+
+            foreach ($views as $view) {
+                $lines[] = "GRANT SELECT ON {$table($view)} TO {$grantee};";
+            }
+
+            $lines[] = "-- Global privileges (GRANT ... ON *.*) and accounts with other hosts than '{$host}' are not covered.";
         }
 
         $lines[] = '-- Versions are append-only; the chain head is updated in place.';
@@ -81,6 +94,7 @@ class GrantStatements
         return [
             '-- The user must not own these tables: owners can change or drop them regardless of privileges.',
             '-- Run migrations with a separate owner role.',
+            '-- Tables outside the public schema also need: GRANT USAGE ON SCHEMA <schema> TO '.$role.';',
             "REVOKE ALL ON TABLE {$this->pgsqlIdentifier($versions)} FROM {$role};",
             "GRANT SELECT, INSERT ON TABLE {$this->pgsqlIdentifier($versions)} TO {$role};",
             "GRANT USAGE ON SEQUENCE {$this->pgsqlIdentifier($versions.'_id_seq')} TO {$role};",

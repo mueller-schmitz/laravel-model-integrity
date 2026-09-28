@@ -31,6 +31,23 @@ it('uses the database user of the connection by default', function (): void {
     expect(Artisan::output())->toContain('configured_user');
 })->skip(fn () => DB::connection()->getDriverName() === 'sqlite', 'SQLite has no users');
 
+it('fails instead of printing grants for an anonymous user', function (): void {
+    config(['database.connections.grants_target' => array_merge(
+        config('database.connections.'.config('database.default')),
+        ['username' => ''],
+    )]);
+
+    $this->artisan('model-integrity:grants', ['--connection' => 'grants_target'])
+        ->expectsOutputToContain('--user')
+        ->assertExitCode(2);
+})->skip(fn () => DB::connection()->getDriverName() === 'sqlite', 'SQLite has no users');
+
+it('warns about options PostgreSQL ignores', function (): void {
+    $this->artisan('model-integrity:grants', ['--user' => 'app', '--host' => '10.0.0.1', '--all-tables' => true])
+        ->expectsOutputToContain('ignored')
+        ->assertExitCode(0);
+})->skip(fn () => DB::connection()->getDriverName() !== 'pgsql', 'PostgreSQL only');
+
 it('lists all other tables with --all-tables on MySQL', function (): void {
     Artisan::call('model-integrity:grants', ['--user' => 'app', '--all-tables' => true]);
 

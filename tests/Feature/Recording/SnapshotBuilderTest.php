@@ -72,6 +72,7 @@ it('normalizes every attribute by its cast', function (): void {
 });
 
 it('normalizes the remaining cast types', function (): void {
+    Carbon::setTestNow(); // older Carbon versions parse with the timezone of the test clock
     config(['app.timezone' => 'Europe/Berlin']);
     date_default_timezone_set('Europe/Berlin');
 

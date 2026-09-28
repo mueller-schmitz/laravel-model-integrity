@@ -31,15 +31,31 @@ class GrantsCommand extends Command
         $versions = $prefix.Config::string('model-integrity.tables.versions');
         $heads = $prefix.Config::string('model-integrity.tables.heads');
 
+        $driver = $connection->getDriverName();
+        $user = $this->user($connection);
+        $host = $this->stringOption('host') ?? '%';
+        $allTables = $this->option('all-tables') === true;
+
+        if ($user === '' && $driver !== 'sqlite') {
+            $this->error('The connection has no database user; pass --user.');
+
+            return self::INVALID;
+        }
+
+        if ($driver === 'pgsql' && ($host !== '%' || $allTables)) {
+            $this->warn('--host and --all-tables are ignored on PostgreSQL: roles have no host and privileges are granted per table.');
+        }
+
         $lines = $grants->build(
-            $connection->getDriverName(),
-            $this->user($connection),
-            $this->stringOption('host') ?? '%',
+            $driver,
+            $user,
+            $host,
             $connection->getDatabaseName(),
             $versions,
             $heads,
-            $this->option('all-tables') === true ? $this->otherTables($connection, [$versions, $heads]) : [],
-            $this->option('all-tables') === true,
+            $allTables ? $this->otherTables($connection, [$versions, $heads]) : [],
+            $allTables,
+            $allTables ? $this->views($connection) : [],
         );
 
         foreach ($lines as $line) {
@@ -82,5 +98,24 @@ class GrantsCommand extends Command
         sort($tables);
 
         return $tables;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function views(Connection $connection): array
+    {
+        $database = $connection->getDatabaseName();
+        $views = [];
+
+        foreach ($connection->getSchemaBuilder()->getViews() as $view) {
+            if (($view['schema'] ?? $database) === $database) {
+                $views[] = $view['name'];
+            }
+        }
+
+        sort($views);
+
+        return $views;
     }
 }

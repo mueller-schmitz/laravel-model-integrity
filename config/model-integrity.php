@@ -40,7 +40,7 @@ return [
     |
     */
 
-    'append_only_triggers' => env('MODEL_INTEGRITY_APPEND_ONLY_TRIGGERS', true),
+    'append_only_triggers' => filter_var(env('MODEL_INTEGRITY_APPEND_ONLY_TRIGGERS', true), FILTER_VALIDATE_BOOL),
 
     /*
     |--------------------------------------------------------------------------
