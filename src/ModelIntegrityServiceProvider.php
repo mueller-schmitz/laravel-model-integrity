@@ -12,6 +12,7 @@ use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
 use MuellerSchmitz\ModelIntegrity\Recording\ActorResolver;
 use MuellerSchmitz\ModelIntegrity\Recording\SnapshotBuilder;
+use MuellerSchmitz\ModelIntegrity\Verification\IntegrityChecker;
 
 class ModelIntegrityServiceProvider extends ServiceProvider
 {
@@ -23,6 +24,7 @@ class ModelIntegrityServiceProvider extends ServiceProvider
         $this->app->singleton(Hasher::class);
         $this->app->singleton(SnapshotBuilder::class);
         $this->app->scoped(ActorResolver::class);
+        $this->app->singleton(IntegrityChecker::class);
     }
 
     public function boot(): void

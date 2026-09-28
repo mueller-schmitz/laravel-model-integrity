@@ -38,6 +38,9 @@ class Version extends Model
 
     protected $guarded = [];
 
+    /** Set by a verifying history query; null when not verified. */
+    private ?bool $valid = null;
+
     protected static function booted(): void
     {
         static::updating(fn () => throw ImmutableModelException::versionModification());
@@ -54,6 +57,25 @@ class Version extends Model
         $connection = config('model-integrity.connection');
 
         return is_string($connection) ? $connection : parent::getConnectionName();
+    }
+
+    /**
+     * Whether the chain is intact up to and including this version, or null if
+     * the history was loaded without verification.
+     */
+    public function isValid(): ?bool
+    {
+        return $this->valid;
+    }
+
+    /**
+     * @internal set by the IntegrityChecker
+     */
+    public function markValidity(bool $valid): static
+    {
+        $this->valid = $valid;
+
+        return $this;
     }
 
     /**

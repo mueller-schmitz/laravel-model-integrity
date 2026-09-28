@@ -34,6 +34,11 @@ class IntegrityConfigurationException extends LogicException
         ));
     }
 
+    public static function notTracked(string $class): self
+    {
+        return new self("Model [{$class}] does not use the HasIntegrity trait.");
+    }
+
     public static function headMissing(string $chain): self
     {
         return new self("The [{$chain}] chain head is missing. Run the model-integrity migrations.");

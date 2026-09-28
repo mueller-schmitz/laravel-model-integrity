@@ -109,7 +109,8 @@ DB::transaction(function () use ($post, $tagIds) {
 ### History
 
 ```php
-$invoice->integrityVersions()->get(); // oldest first
+$invoice->integrityVersions()->get(); // query builder, oldest first
+$invoice->history();                  // collection, see Verification
 ```
 
 ### Limits
@@ -124,6 +125,50 @@ The package records what goes through Eloquent model events. These bypass it and
 Such changes are not prevented, but they are detected: the state drift check compares the current row with the last snapshot.
 
 Model and integrity tables must use the same database connection, otherwise both cannot be written in one transaction.
+
+## Verification
+
+```php
+use MuellerSchmitz\ModelIntegrity\Facades\IntegrityChecker;
+
+$result = IntegrityChecker::checkModel($invoice);
+
+$result->passes();
+$result->fails();
+$result->errors();            // Collection<IntegrityError>
+$result->checkedVersions();
+$result->lastValidVersion();  // the chain is intact up to this version
+
+IntegrityChecker::getHistory($invoice);                // Collection<Version>, oldest first
+IntegrityChecker::getHistory($invoice, verify: true);  // each version with ->isValid()
+IntegrityChecker::versionAt($invoice, '2026-03-01');   // version current at that moment
+IntegrityChecker::checkType(Invoice::class);           // all invoices, including deleted ones
+IntegrityChecker::checkChain();                        // the global chain over all models
+IntegrityChecker::checkAll();                          // global chain and every recorded model
+```
+
+The same is available on the model: `$invoice->history()`, `$invoice->verifyIntegrity()`, `$invoice->versionAt($date)`. A method with the same name defined on the model takes precedence over the trait.
+
+Date strings passed to `versionAt()` are read in the application timezone.
+
+### What is detected
+
+| Error type | Meaning |
+|---|---|
+| `HashMismatch` | A version's content does not match its hash, or its hash format is unknown |
+| `BrokenChain` | A version is not referenced by its successor (per model or globally) |
+| `VersionGap` | Version numbers of a model are not consecutive |
+| `SequenceGap` | The global sequence has a gap: versions were removed |
+| `TruncatedChain` | The chain head does not match the last version: the end was cut off or the head was reset |
+| `StateDrift` | The current row differs from the last snapshot, was deleted or restored outside the application, or was never recorded |
+
+When a version is replaced and re-hashed, the successor no longer references it, so the replaced version is reported as `BrokenChain`. Violations dispatch an `IntegrityViolationDetected` event with the result (and the model for `checkModel()`).
+
+### Limits
+
+- If the last versions **and** the chain head are removed together, the chain itself is consistent again. Only the state drift check notices it if the model state differs. External anchors (planned for v0.3) close this gap.
+- `checkAll()` discovers models through their recorded versions. Tables whose models never had a version are only checked by `checkType()`.
+- `checkType()` keeps the recorded keys of the type in memory (roughly 50 MB per million models).
 
 ## Hash format
 

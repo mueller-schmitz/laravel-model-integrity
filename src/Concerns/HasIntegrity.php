@@ -4,14 +4,18 @@ declare(strict_types=1);
 
 namespace MuellerSchmitz\ModelIntegrity\Concerns;
 
+use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Config;
 use MuellerSchmitz\ModelIntegrity\Exceptions\ImmutableModelException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
 use MuellerSchmitz\ModelIntegrity\Recording\SnapshotBuilder;
 use MuellerSchmitz\ModelIntegrity\Recording\VersionRecorder;
+use MuellerSchmitz\ModelIntegrity\Verification\IntegrityChecker;
+use MuellerSchmitz\ModelIntegrity\Verification\IntegrityResult;
 
 /**
  * Records every change of the model as a hashed, chained version.
@@ -157,6 +161,29 @@ trait HasIntegrity
             ->where('versionable_type', $this->getMorphClass())
             ->where('versionable_id', is_scalar($key) ? (string) $key : '')
             ->orderBy('version');
+    }
+
+    /**
+     * All versions, oldest first; with $verify each version's isValid() is set.
+     *
+     * @return Collection<int, Version>
+     */
+    public function history(bool $verify = false): Collection
+    {
+        return app(IntegrityChecker::class)->getHistory($this, $verify);
+    }
+
+    public function verifyIntegrity(): IntegrityResult
+    {
+        return app(IntegrityChecker::class)->checkModel($this);
+    }
+
+    /**
+     * The version that was current at the given moment.
+     */
+    public function versionAt(DateTimeInterface|string $date): ?Version
+    {
+        return app(IntegrityChecker::class)->versionAt($this, $date);
     }
 
     public function getIntegrityMode(): string
