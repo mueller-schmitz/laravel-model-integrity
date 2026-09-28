@@ -58,7 +58,6 @@ class VersionRecorder
         return $connection->transaction(function () use ($connection, $model, $event, $snapshot, $schemaVersion, $reason, $context): Version {
             $head = $connection->table($this->table('heads'))
                 ->where('chain', self::GLOBAL_CHAIN)
-                ->lockForUpdate()
                 ->first();
 
             if ($head === null) {
