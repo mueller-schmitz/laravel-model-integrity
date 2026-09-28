@@ -4,9 +4,14 @@ declare(strict_types=1);
 
 namespace MuellerSchmitz\ModelIntegrity;
 
+use Illuminate\Queue\Events\JobFailed;
+use Illuminate\Queue\Events\JobProcessed;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
+use MuellerSchmitz\ModelIntegrity\Recording\ActorResolver;
+use MuellerSchmitz\ModelIntegrity\Recording\SnapshotBuilder;
 
 class ModelIntegrityServiceProvider extends ServiceProvider
 {
@@ -16,10 +21,17 @@ class ModelIntegrityServiceProvider extends ServiceProvider
 
         $this->app->singleton(CanonicalSerializer::class);
         $this->app->singleton(Hasher::class);
+        $this->app->singleton(SnapshotBuilder::class);
+        $this->app->scoped(ActorResolver::class);
     }
 
     public function boot(): void
     {
+        // An actor set inside a job must not leak into the next job of the worker.
+        $forgetActor = fn () => $this->app->make(ActorResolver::class)->forget();
+        Event::listen(JobProcessed::class, $forgetActor);
+        Event::listen(JobFailed::class, $forgetActor);
+
         if (! $this->app->runningInConsole()) {
             return;
         }

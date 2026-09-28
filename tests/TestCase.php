@@ -24,10 +24,12 @@ abstract class TestCase extends Orchestra
         // 'testing' is Testbench's in-memory SQLite connection. CI sets DB_CONNECTION
         // (mysql, mariadb, pgsql) plus DB_HOST, DB_PORT, DB_DATABASE, DB_USERNAME, DB_PASSWORD.
         $app['config']->set('database.default', env('DB_CONNECTION', 'testing'));
+        $app['config']->set('app.key', 'base64:'.base64_encode(str_repeat('k', 32)));
     }
 
     protected function defineDatabaseMigrations(): void
     {
         $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
+        $this->loadMigrationsFrom(__DIR__.'/Fixtures/migrations');
     }
 }

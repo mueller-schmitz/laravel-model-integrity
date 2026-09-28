@@ -36,6 +36,95 @@ php artisan vendor:publish --tag=model-integrity-migrations
 php artisan migrate
 ```
 
+## Usage
+
+Add the `HasIntegrity` trait to a model:
+
+```php
+use Illuminate\Database\Eloquent\Model;
+use MuellerSchmitz\ModelIntegrity\Concerns\HasIntegrity;
+
+class Invoice extends Model
+{
+    use HasIntegrity;
+
+    protected string $integrityMode = 'versioned';    // 'versioned' | 'immutable'
+    protected string $integrityDeletes = 'record';    // 'forbid' | 'record'
+    protected array $integrityExcept = ['updated_at']; // not part of snapshots
+    protected array $integrityRelations = ['tags'];   // related keys are part of every snapshot
+    protected int $integritySchemaVersion = 1;        // bump when the snapshot structure changes
+}
+```
+
+All properties are optional; defaults come from `config/model-integrity.php`.
+
+### What gets recorded
+
+| Action | Version event |
+|---|---|
+| `create()` | `created` |
+| `update()` / `save()` with changes to recorded attributes | `updated` |
+| `delete()` with `$integrityDeletes = 'record'` | `deleted` |
+| `restore()` (soft deletes) | `restored` |
+| `forceDelete()` (soft deletes) | `force_deleted` |
+| `recordRelation('tags')` | `relation_synced` |
+
+- `save()` and `delete()` run in a database transaction: the model change and its version are committed together or not at all.
+- In `immutable` mode any update throws an `ImmutableModelException`. With `$integrityDeletes = 'forbid'` (default) deletes throw as well.
+- Saves that only change excluded attributes (e.g. `touch()`) do not create a version.
+- Each version holds a **full snapshot**, read from the stored database row and normalized by the model casts (decimals as strings, dates in UTC, JSON sorted). Encrypted attributes are stored as ciphertext. Define casts for all attributes whose type matters; uncast values are stored as the database driver returns them.
+
+### Reason, context and actor
+
+```php
+$invoice->withIntegrityReason('Customer complaint')
+    ->withIntegrityContext(['ticket' => 'SUP-123'])
+    ->update(['total' => '90.00']);
+```
+
+Reason and context apply to the next `save()` or `delete()` only.
+
+The actor is the authenticated user. Where nobody is authenticated, for example in queue jobs or console commands, set it explicitly:
+
+```php
+use MuellerSchmitz\ModelIntegrity\ModelIntegrity;
+
+ModelIntegrity::actingAs($user, fn () => $invoice->update([...]));
+ModelIntegrity::actingAs('system'); // a label instead of a model
+```
+
+The actor is reset after every queue job.
+
+### Relations
+
+`sync()`, `attach()` and `detach()` fire no model events. Declare the relation in `$integrityRelations` and record the change in the same transaction:
+
+```php
+DB::transaction(function () use ($post, $tagIds) {
+    $post->tags()->sync($tagIds);
+    $post->recordRelation('tags');
+});
+```
+
+### History
+
+```php
+$invoice->integrityVersions()->get(); // oldest first
+```
+
+### Limits
+
+The package records what goes through Eloquent model events. These bypass it and are **not** recorded:
+
+- mass updates and deletes (`Invoice::where(...)->update(...)`, `DB::table(...)`)
+- `saveQuietly()`, `Model::withoutEvents()`
+- `increment()`/`decrement()` run outside the `save()` transaction (still recorded, but not atomically)
+- a model class that overrides `save()` or `delete()` itself replaces the transactional wrapper of the trait
+
+Such changes are not prevented, but they are detected: the state drift check compares the current row with the last snapshot.
+
+Model and integrity tables must use the same database connection, otherwise both cannot be written in one transaction.
+
 ## Hash format
 
 Every version stores the hash format it was created with (`hash_format`). A released format never changes; new rules always get a new format number. This section specifies format `1` so that hashes can be recomputed independently of this package, for example by an auditor.

@@ -11,4 +11,9 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 ### Added
 
 - Package scaffold: service provider, config, migrations for `integrity_versions` and `integrity_heads`
+- `HasIntegrity` trait: records `created`, `updated`, `deleted`, `restored`, `force_deleted` and `relation_synced` versions with full snapshots in the per-model and the global hash chain, inside the model's save/delete transaction
+- `immutable` and `versioned` modes, `forbid` and `record` delete modes
+- Snapshots read from the stored row and normalized by model casts; declared relations included
+- Actor resolution (`ModelIntegrity::actingAs()`), reason and context per write
+- `VersionRecorded` event after commit
 - Hash format 1: canonical JSON serialization (`CanonicalSerializer`) and SHA-256 envelope hashing (`Hasher`), specified in the README and pinned by reference vectors
