@@ -1,0 +1,166 @@
+<?php
+
+declare(strict_types=1);
+
+namespace MuellerSchmitz\ModelIntegrity\Recording;
+
+use Carbon\CarbonImmutable;
+use Illuminate\Database\Connection;
+use Illuminate\Database\DatabaseManager;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Config;
+use MuellerSchmitz\ModelIntegrity\Events\VersionRecorded;
+use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
+use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
+use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
+use MuellerSchmitz\ModelIntegrity\Models\Version;
+
+/**
+ * Appends a version to the per-model chain and the global chain.
+ *
+ * The global head row is locked for the duration of the transaction. This
+ * serializes all recording writes, which keeps the global sequence gapless.
+ */
+class VersionRecorder
+{
+    private const string GLOBAL_CHAIN = 'global';
+
+    private const int HASH_FORMAT = 1;
+
+    public function __construct(
+        private readonly DatabaseManager $database,
+        private readonly Hasher $hasher,
+        private readonly CanonicalSerializer $serializer,
+        private readonly ActorResolver $actors,
+    ) {}
+
+    /**
+     * @param  array<string, mixed>  $snapshot  canonical snapshot from the SnapshotBuilder
+     * @param  array<string, mixed>|null  $context
+     */
+    public function record(
+        Model $model,
+        string $event,
+        array $snapshot,
+        int $schemaVersion = 1,
+        ?string $reason = null,
+        ?array $context = null,
+    ): Version {
+        $connection = $this->connectionFor($model);
+
+        return $connection->transaction(function () use ($connection, $model, $event, $snapshot, $schemaVersion, $reason, $context): Version {
+            $head = $connection->table($this->table('heads'))
+                ->where('chain', self::GLOBAL_CHAIN)
+                ->lockForUpdate()
+                ->first();
+
+            if ($head === null) {
+                throw IntegrityConfigurationException::headMissing(self::GLOBAL_CHAIN);
+            }
+
+            $type = $model->getMorphClass();
+            $id = $this->modelKey($model);
+
+            $previous = $connection->table($this->table('versions'))
+                ->where('versionable_type', $type)
+                ->where('versionable_id', $id)
+                ->orderByDesc('version')
+                ->first(['version', 'hash']);
+
+            $actor = $this->actors->resolve();
+            $createdAt = CarbonImmutable::now('UTC');
+
+            $envelope = [
+                'format' => self::HASH_FORMAT,
+                'sequence' => $this->intValue($head->sequence) + 1,
+                'versionable_type' => $type,
+                'versionable_id' => $id,
+                'version' => $previous === null ? 1 : $this->intValue($previous->version) + 1,
+                'event' => $event,
+                'schema_version' => $schemaVersion,
+                'snapshot' => $snapshot,
+                'prev_hash' => $previous?->hash,
+                'global_prev_hash' => $head->hash,
+                'actor_type' => $actor['type'],
+                'actor_id' => $actor['id'],
+                'reason' => $reason,
+                'context' => $context,
+                'created_at' => $this->serializer->normalize($createdAt),
+            ];
+
+            $hash = $this->hasher->hash($envelope);
+
+            $row = [
+                'sequence' => $envelope['sequence'],
+                'versionable_type' => $type,
+                'versionable_id' => $id,
+                'version' => $envelope['version'],
+                'event' => $event,
+                'hash_format' => self::HASH_FORMAT,
+                'schema_version' => $schemaVersion,
+                'snapshot' => $this->serializer->encode($snapshot),
+                'prev_hash' => $envelope['prev_hash'],
+                'global_prev_hash' => $envelope['global_prev_hash'],
+                'hash' => $hash,
+                'actor_type' => $actor['type'],
+                'actor_id' => $actor['id'],
+                'reason' => $reason,
+                'context' => $context === null ? null : $this->serializer->encode($context),
+                'created_at' => $createdAt->format('Y-m-d H:i:s.u'),
+            ];
+
+            $row['id'] = $connection->table($this->table('versions'))->insertGetId($row);
+
+            $connection->table($this->table('heads'))
+                ->where('chain', self::GLOBAL_CHAIN)
+                ->update([
+                    'sequence' => $envelope['sequence'],
+                    'hash' => $hash,
+                    'updated_at' => $row['created_at'],
+                ]);
+
+            $version = (new Version)->newFromBuilder($row);
+
+            $connection->afterCommit(fn () => event(new VersionRecorded($version, $model)));
+
+            return $version;
+        });
+    }
+
+    /**
+     * The model's connection, after making sure the integrity tables live on it.
+     */
+    private function connectionFor(Model $model): Connection
+    {
+        $configured = config('model-integrity.connection');
+        $integrityName = $this->database->connection(is_string($configured) ? $configured : null)->getName();
+        $connection = $model->getConnection();
+
+        if ($integrityName !== $connection->getName()) {
+            throw IntegrityConfigurationException::connectionMismatch(
+                $model,
+                (string) $connection->getName(),
+                (string) $integrityName,
+            );
+        }
+
+        return $connection;
+    }
+
+    private function table(string $name): string
+    {
+        return Config::string("model-integrity.tables.{$name}");
+    }
+
+    private function modelKey(Model $model): string
+    {
+        $key = $model->getKey();
+
+        return is_scalar($key) ? (string) $key : throw IntegrityConfigurationException::rowMissing($model);
+    }
+
+    private function intValue(mixed $value): int
+    {
+        return is_numeric($value) ? (int) $value : 0;
+    }
+}

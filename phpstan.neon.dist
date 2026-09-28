@@ -7,6 +7,8 @@ parameters:
     - src
     - config
     - database
+    # Fixture models use the traits, so the traits get analysed in context.
+    - tests/Fixtures/Models
   configDirectories:
     - config
   tmpDir: build/phpstan
