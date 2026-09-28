@@ -18,4 +18,7 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 - `VersionRecorded` event after commit
 - `IntegrityChecker` (class and facade): `checkModel()`, `checkType()`, `checkChain()`, `checkAll()`, `getHistory()` with per-version `isValid()`, `versionAt()`; detects hash mismatches, broken chains, version and sequence gaps, truncated chains and state drift; `IntegrityViolationDetected` event
 - Model shortcuts `history()`, `verifyIntegrity()`, `versionAt()`
+- Append-only triggers on `integrity_versions` for MySQL, MariaDB, PostgreSQL and SQLite, installed by migration (`append_only_triggers` config option)
+- `model-integrity:install`, `model-integrity:grants` (privileges for the application user, `--all-tables` for MySQL/MariaDB) and `model-integrity:verify` (exit code 1 on violations, `--model`, `--id`, `--fail-fast`)
+- `stopOnFirstFailure` option for `checkType()` and `checkAll()`
 - Hash format 1: canonical JSON serialization (`CanonicalSerializer`) and SHA-256 envelope hashing (`Hasher`), specified in the README and pinned by reference vectors

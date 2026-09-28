@@ -97,10 +97,11 @@ class IntegrityChecker
      * The recorded keys of the type are held in memory for the second part.
      *
      * @param  class-string<Model>  $class
+     * @param  bool  $stopOnFirstFailure  stop after the first model with violations
      */
-    public function checkType(string $class): IntegrityResult
+    public function checkType(string $class, bool $stopOnFirstFailure = false): IntegrityResult
     {
-        $result = $this->inspectType($class);
+        $result = $this->inspectType($class, $stopOnFirstFailure);
 
         $this->dispatchOnFailure($result, null);
 
@@ -112,11 +113,19 @@ class IntegrityChecker
      *
      * Models of a class without any recorded version are not discovered here;
      * use checkType() for them.
+     *
+     * @param  bool  $stopOnFirstFailure  stop after a broken chain or the first model with violations
      */
-    public function checkAll(): IntegrityResult
+    public function checkAll(bool $stopOnFirstFailure = false): IntegrityResult
     {
         $chain = $this->inspectChain();
         $results = [$chain];
+
+        if ($stopOnFirstFailure && $chain->fails()) {
+            $this->dispatchOnFailure($chain, null);
+
+            return $chain;
+        }
 
         foreach (Version::query()->distinct()->orderBy('versionable_type')->pluck('versionable_type') as $type) {
             $type = is_string($type) ? $type : '';
@@ -128,11 +137,13 @@ class IntegrityChecker
                     "Model class [{$class}] does not exist or does not use HasIntegrity; its state was not checked.",
                     [$type, null],
                 )], 0, null);
-
-                continue;
+            } else {
+                $results[] = $this->inspectType($class, $stopOnFirstFailure);
             }
 
-            $results[] = $this->inspectType($class);
+            if ($stopOnFirstFailure && end($results)->fails()) {
+                break;
+            }
         }
 
         $result = IntegrityResult::combine($results, $chain->checkedVersions());
@@ -145,7 +156,7 @@ class IntegrityChecker
     /**
      * @param  class-string<Model>  $class
      */
-    protected function inspectType(string $class): IntegrityResult
+    protected function inspectType(string $class, bool $stopOnFirstFailure = false): IntegrityResult
     {
         if (! $this->isTracked($class)) {
             throw IntegrityConfigurationException::notTracked($class);
@@ -174,12 +185,15 @@ class IntegrityChecker
                 ->keyBy(fn (Model $model): string => $this->key($model));
 
             foreach ($chunk as $id) {
-                // Deleted models are checked through a key-only instance.
-                $model = $models->get($id) ?? $prototype->newInstance()->forceFill([$keyName => $castKey($id)]);
+                $model = $models->get($id) ?? $this->keyOnlyInstance($prototype, $castKey($id));
 
                 $result = $this->inspectModel($model);
                 $results[] = $result;
                 $checked += $result->checkedVersions();
+
+                if ($stopOnFirstFailure && $result->fails()) {
+                    return IntegrityResult::combine($results, $checked);
+                }
             }
         }
 
@@ -193,6 +207,10 @@ class IntegrityChecker
                     self::UNRECORDED_MESSAGE,
                     [$prototype->getMorphClass(), $this->key($model)],
                 );
+
+                if ($stopOnFirstFailure) {
+                    break;
+                }
             }
         }
 
@@ -617,6 +635,28 @@ class IntegrityChecker
     protected function isTracked(string $class): bool
     {
         return in_array(HasIntegrity::class, class_uses_recursive($class), true);
+    }
+
+    /**
+     * The stored model with the given key, or a key-only instance if the row
+     * no longer exists, so deleted models can be checked as well.
+     *
+     * @param  class-string<Model>  $class
+     */
+    public function findModel(string $class, int|string $id): Model
+    {
+        if (! $this->isTracked($class)) {
+            throw IntegrityConfigurationException::notTracked($class);
+        }
+
+        $prototype = new $class;
+
+        return $class::query()->withoutGlobalScopes()->find($id) ?? $this->keyOnlyInstance($prototype, $id);
+    }
+
+    protected function keyOnlyInstance(Model $prototype, int|string $id): Model
+    {
+        return $prototype->newInstance()->forceFill([$prototype->getKeyName() => $id]);
     }
 
     /**

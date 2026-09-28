@@ -25,16 +25,46 @@ All writes are appended to a single global chain. The chain head is locked with 
 
 - PHP ^8.3
 - Laravel ^12.0 or ^13.0
-- MySQL, MariaDB or PostgreSQL (SQLite works for local testing, but without database-level enforcement)
+- MySQL, MariaDB or PostgreSQL 11+ (SQLite works for local testing; it has triggers, but no users or privileges)
 
 ## Installation
 
 ```bash
 composer require mueller-schmitz/laravel-model-integrity
-php artisan vendor:publish --tag=model-integrity-config
-php artisan vendor:publish --tag=model-integrity-migrations
+php artisan model-integrity:install
 php artisan migrate
 ```
+
+`model-integrity:install` publishes the config and the migrations (once; running it again does not duplicate them). Alternatively publish with the tags `model-integrity-config` and `model-integrity-migrations`.
+
+## Database enforcement
+
+Model events are not the only way to change data. Queries like `Invoice::where(...)->update(...)` or `DB::table(...)` bypass them, and so does anyone with direct database access. Two database-level measures make recorded versions append-only:
+
+### Triggers
+
+The migrations install triggers that reject `UPDATE` and `DELETE` on `integrity_versions` (MySQL, MariaDB, PostgreSQL, SQLite). On PostgreSQL they reject `TRUNCATE` as well; on MySQL and MariaDB `TRUNCATE` fires no triggers and is prevented by privileges.
+
+- MySQL with binary logging requires `SUPER` or `log_bin_trust_function_creators = 1` to create triggers.
+- If the migration user may not create triggers, set `MODEL_INTEGRITY_APPEND_ONLY_TRIGGERS=false` and rely on privileges.
+- The chain head (`integrity_heads`) is updated on every write and has no trigger; tampering with it is detected by the verification.
+
+### Privileges
+
+The application's database user should only read and append versions. Print the matching SQL for your database:
+
+```bash
+php artisan model-integrity:grants --user=app
+php artisan model-integrity:grants --user=app --host=10.0.0.% --all-tables  # MySQL/MariaDB
+```
+
+The command only prints the statements; review and run them with an administrative user.
+
+- **MySQL/MariaDB:** privileges granted on the whole database (`GRANT ALL ON app.*`) cannot be narrowed per table. `--all-tables` prints a `REVOKE` for the database-wide privileges and table privileges for every table instead.
+- **PostgreSQL:** the application user must not own the integrity tables; owners can change or drop them regardless of privileges.
+- Run migrations with a separate user that may alter the schema.
+
+Triggers and privileges are tested against MySQL 8.0/8.4, MariaDB 10.11/11.4 and PostgreSQL 14/17, including a restricted user that is denied `UPDATE` and `DELETE`.
 
 ## Usage
 
@@ -150,6 +180,24 @@ IntegrityChecker::checkAll();                          // global chain and every
 The same is available on the model: `$invoice->history()`, `$invoice->verifyIntegrity()`, `$invoice->versionAt($date)`. A method with the same name defined on the model takes precedence over the trait.
 
 Date strings passed to `versionAt()` are read in the application timezone.
+
+### Command and scheduling
+
+```bash
+php artisan model-integrity:verify                                  # global chain and all recorded models
+php artisan model-integrity:verify --model="App\Models\Invoice"     # one type (class or morph alias)
+php artisan model-integrity:verify --model="App\Models\Invoice" --id=42
+php artisan model-integrity:verify --fail-fast                      # stop at the first failing model
+```
+
+The command prints the violations and exits with code `1` if there are any, so it can fail a CI job or alert from the scheduler:
+
+```php
+// routes/console.php
+use Illuminate\Support\Facades\Schedule;
+
+Schedule::command('model-integrity:verify')->dailyAt('03:00')->emailOutputOnFailure('it@example.com');
+```
 
 ### What is detected
 

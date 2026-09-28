@@ -85,6 +85,9 @@ class GrantsCommand extends Command
     {
         $value = $this->option($name);
 
+        // Artisan::call() passes numbers as int; the command line always passes strings.
+        $value = is_int($value) ? (string) $value : $value;
+
         return is_string($value) && $value !== '' ? $value : null;
     }
 }

@@ -19,10 +19,14 @@ it('prints the statements for the connection', function (): void {
 });
 
 it('uses the database user of the connection by default', function (): void {
-    config(['database.connections.'.config('database.default').'.username' => 'configured_user']);
-    DB::purge();
+    // A separate connection: the command only reads its configuration, while
+    // changing the default connection would break the test's own database access.
+    config(['database.connections.grants_target' => array_merge(
+        config('database.connections.'.config('database.default')),
+        ['username' => 'configured_user'],
+    )]);
 
-    Artisan::call('model-integrity:grants');
+    Artisan::call('model-integrity:grants', ['--connection' => 'grants_target']);
 
     expect(Artisan::output())->toContain('configured_user');
 })->skip(fn () => DB::connection()->getDriverName() === 'sqlite', 'SQLite has no users');

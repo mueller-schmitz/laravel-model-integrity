@@ -9,6 +9,8 @@ use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use MuellerSchmitz\ModelIntegrity\Console\GrantsCommand;
+use MuellerSchmitz\ModelIntegrity\Console\InstallCommand;
+use MuellerSchmitz\ModelIntegrity\Console\VerifyCommand;
 use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
 use MuellerSchmitz\ModelIntegrity\Recording\ActorResolver;
@@ -41,6 +43,8 @@ class ModelIntegrityServiceProvider extends ServiceProvider
 
         $this->commands([
             GrantsCommand::class,
+            InstallCommand::class,
+            VerifyCommand::class,
         ]);
 
         $this->publishes([
