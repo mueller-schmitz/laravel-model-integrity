@@ -1,0 +1,124 @@
+[
+    {
+        "description": "First version of a model, first entry of the global chain",
+        "envelope": {
+            "format": 1,
+            "sequence": 1,
+            "versionable_type": "App\\Models\\Invoice",
+            "versionable_id": "42",
+            "version": 1,
+            "event": "created",
+            "schema_version": 1,
+            "snapshot": {
+                "total": "100.00",
+                "paid": false,
+                "number": "RE-2026-0001",
+                "issued_at": "2026-09-28T10:00:00.000000Z",
+                "id": 42
+            },
+            "prev_hash": null,
+            "global_prev_hash": null,
+            "actor_type": null,
+            "actor_id": null,
+            "reason": null,
+            "context": null,
+            "created_at": "2026-09-28T10:00:00.000000Z"
+        },
+        "canonical": "{\"actor_id\":null,\"actor_type\":null,\"context\":null,\"created_at\":\"2026-09-28T10:00:00.000000Z\",\"event\":\"created\",\"format\":1,\"global_prev_hash\":null,\"prev_hash\":null,\"reason\":null,\"schema_version\":1,\"sequence\":1,\"snapshot\":{\"id\":42,\"issued_at\":\"2026-09-28T10:00:00.000000Z\",\"number\":\"RE-2026-0001\",\"paid\":false,\"total\":\"100.00\"},\"version\":1,\"versionable_id\":\"42\",\"versionable_type\":\"App\\\\Models\\\\Invoice\"}",
+        "hash": "1c6c86a548e7109522f76c8bd146d843d2e26d94591c1c4d7b86c6268529b036"
+    },
+    {
+        "description": "Update with actor, context and microseconds",
+        "envelope": {
+            "format": 1,
+            "sequence": 2,
+            "versionable_type": "App\\Models\\Invoice",
+            "versionable_id": "42",
+            "version": 2,
+            "event": "updated",
+            "schema_version": 1,
+            "snapshot": {
+                "id": 42,
+                "number": "RE-2026-0001",
+                "total": "100.00",
+                "paid": true,
+                "issued_at": "2026-09-28T10:00:00.000000Z"
+            },
+            "prev_hash": "1c6c86a548e7109522f76c8bd146d843d2e26d94591c1c4d7b86c6268529b036",
+            "global_prev_hash": "1c6c86a548e7109522f76c8bd146d843d2e26d94591c1c4d7b86c6268529b036",
+            "actor_type": "App\\Models\\User",
+            "actor_id": "7",
+            "reason": null,
+            "context": {
+                "source": "web",
+                "ip": "203.0.113.10"
+            },
+            "created_at": "2026-09-28T10:05:00.123456Z"
+        },
+        "canonical": "{\"actor_id\":\"7\",\"actor_type\":\"App\\\\Models\\\\User\",\"context\":{\"ip\":\"203.0.113.10\",\"source\":\"web\"},\"created_at\":\"2026-09-28T10:05:00.123456Z\",\"event\":\"updated\",\"format\":1,\"global_prev_hash\":\"1c6c86a548e7109522f76c8bd146d843d2e26d94591c1c4d7b86c6268529b036\",\"prev_hash\":\"1c6c86a548e7109522f76c8bd146d843d2e26d94591c1c4d7b86c6268529b036\",\"reason\":null,\"schema_version\":1,\"sequence\":2,\"snapshot\":{\"id\":42,\"issued_at\":\"2026-09-28T10:00:00.000000Z\",\"number\":\"RE-2026-0001\",\"paid\":true,\"total\":\"100.00\"},\"version\":2,\"versionable_id\":\"42\",\"versionable_type\":\"App\\\\Models\\\\Invoice\"}",
+        "hash": "ca6c8e88387e1a545817260b6122e4a77ca12cdb0b3372590ee580e0e8a83373"
+    },
+    {
+        "description": "Other model with ULID key, unicode, escapes, nested object and list order",
+        "envelope": {
+            "format": 1,
+            "sequence": 3,
+            "versionable_type": "App\\Models\\Customer",
+            "versionable_id": "01J8Z3V6Q2K4X7N9B5C1D0E2F3",
+            "version": 1,
+            "event": "created",
+            "schema_version": 2,
+            "snapshot": {
+                "tags": [
+                    "b",
+                    "a"
+                ],
+                "name": "Müller & Schmitz GmbH",
+                "notes": "Zeile 1\nZeile 2 \"zitiert\" / Pfad",
+                "id": "01J8Z3V6Q2K4X7N9B5C1D0E2F3",
+                "emoji": "✓",
+                "address": {
+                    "zip": "50667",
+                    "city": "Köln"
+                }
+            },
+            "prev_hash": null,
+            "global_prev_hash": "ca6c8e88387e1a545817260b6122e4a77ca12cdb0b3372590ee580e0e8a83373",
+            "actor_type": null,
+            "actor_id": null,
+            "reason": null,
+            "context": null,
+            "created_at": "2026-09-28T11:00:00.000000Z"
+        },
+        "canonical": "{\"actor_id\":null,\"actor_type\":null,\"context\":null,\"created_at\":\"2026-09-28T11:00:00.000000Z\",\"event\":\"created\",\"format\":1,\"global_prev_hash\":\"ca6c8e88387e1a545817260b6122e4a77ca12cdb0b3372590ee580e0e8a83373\",\"prev_hash\":null,\"reason\":null,\"schema_version\":2,\"sequence\":3,\"snapshot\":{\"address\":{\"city\":\"Köln\",\"zip\":\"50667\"},\"emoji\":\"✓\",\"id\":\"01J8Z3V6Q2K4X7N9B5C1D0E2F3\",\"name\":\"Müller & Schmitz GmbH\",\"notes\":\"Zeile 1\\nZeile 2 \\\"zitiert\\\" / Pfad\",\"tags\":[\"b\",\"a\"]},\"version\":1,\"versionable_id\":\"01J8Z3V6Q2K4X7N9B5C1D0E2F3\",\"versionable_type\":\"App\\\\Models\\\\Customer\"}",
+        "hash": "ec4d2a85aefe51de449c24fe7e8032928e477d68034905113828c924a0a3c4f0"
+    },
+    {
+        "description": "Deleted version with actor and reason",
+        "envelope": {
+            "format": 1,
+            "sequence": 4,
+            "versionable_type": "App\\Models\\Invoice",
+            "versionable_id": "42",
+            "version": 3,
+            "event": "deleted",
+            "schema_version": 1,
+            "snapshot": {
+                "id": 42,
+                "number": "RE-2026-0001",
+                "total": "100.00",
+                "paid": true,
+                "issued_at": "2026-09-28T10:00:00.000000Z"
+            },
+            "prev_hash": "ca6c8e88387e1a545817260b6122e4a77ca12cdb0b3372590ee580e0e8a83373",
+            "global_prev_hash": "ec4d2a85aefe51de449c24fe7e8032928e477d68034905113828c924a0a3c4f0",
+            "actor_type": "App\\Models\\User",
+            "actor_id": "7",
+            "reason": "Storno: Doppelerfassung",
+            "context": null,
+            "created_at": "2026-09-28T12:00:00.000000Z"
+        },
+        "canonical": "{\"actor_id\":\"7\",\"actor_type\":\"App\\\\Models\\\\User\",\"context\":null,\"created_at\":\"2026-09-28T12:00:00.000000Z\",\"event\":\"deleted\",\"format\":1,\"global_prev_hash\":\"ec4d2a85aefe51de449c24fe7e8032928e477d68034905113828c924a0a3c4f0\",\"prev_hash\":\"ca6c8e88387e1a545817260b6122e4a77ca12cdb0b3372590ee580e0e8a83373\",\"reason\":\"Storno: Doppelerfassung\",\"schema_version\":1,\"sequence\":4,\"snapshot\":{\"id\":42,\"issued_at\":\"2026-09-28T10:00:00.000000Z\",\"number\":\"RE-2026-0001\",\"paid\":true,\"total\":\"100.00\"},\"version\":3,\"versionable_id\":\"42\",\"versionable_type\":\"App\\\\Models\\\\Invoice\"}",
+        "hash": "65cf915e9f0f6cb34208ae165df715a2670b60cc0d0345f661acc9a99bcae178"
+    }
+]

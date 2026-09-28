@@ -11,3 +11,4 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 ### Added
 
 - Package scaffold: service provider, config, migrations for `integrity_versions` and `integrity_heads`
+- Hash format 1: canonical JSON serialization (`CanonicalSerializer`) and SHA-256 envelope hashing (`Hasher`), specified in the README and pinned by reference vectors
