@@ -11,6 +11,10 @@ use MuellerSchmitz\ModelIntegrity\Verification\IntegrityResult;
 /**
  * Dispatched when a check finds at least one violation. $model is set for
  * checks of a single model and null for type-wide or global checks.
+ *
+ * After checkAll() the result can hold many errors. Queued listeners should
+ * serialize what they need (e.g. the error count and the first errors as
+ * strings) instead of the whole event.
  */
 class IntegrityViolationDetected
 {

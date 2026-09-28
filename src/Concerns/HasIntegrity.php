@@ -17,6 +17,7 @@ use MuellerSchmitz\ModelIntegrity\Recording\SnapshotBuilder;
 use MuellerSchmitz\ModelIntegrity\Recording\VersionRecorder;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityChecker;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityResult;
+use ReflectionProperty;
 
 /**
  * Records every change of the model as a hashed, chained version.
@@ -48,7 +49,12 @@ trait HasIntegrity
         static::created(fn (Model $model) => self::integrity($model)->recordIntegrityVersion('created'));
 
         static::updating(function (Model $model): void {
-            if (self::integrity($model)->getIntegrityMode() === 'immutable') {
+            $model = self::integrity($model);
+
+            // touch() and $touches only change excluded attributes such as updated_at.
+            $relevant = array_diff(array_keys($model->getDirty()), $model->getIntegrityExcept());
+
+            if ($model->getIntegrityMode() === 'immutable' && $relevant !== []) {
                 throw ImmutableModelException::updateForbidden($model);
             }
         });
@@ -158,6 +164,11 @@ trait HasIntegrity
      */
     public function recordIntegritySnapshot(string $event = 'snapshot', ?string $reason = null): Version
     {
+        // Stored in a 32 character column and shown in reports.
+        if (preg_match('/^[a-z][a-z0-9_]{0,31}$/', $event) !== 1) {
+            throw new InvalidArgumentException("Event [{$event}] must be 1 to 32 lowercase letters, digits or underscores, starting with a letter.");
+        }
+
         if (in_array($event, ['updated', 'deleted', 'restored', 'force_deleted', 'relation_synced'], true)
             || ($event === 'created' && $this->integrityVersions()->exists())) {
             throw new InvalidArgumentException("Event [{$event}] is recorded automatically and cannot be used for a snapshot.");
@@ -322,7 +333,15 @@ trait HasIntegrity
      */
     private function integrityProperty(string $name, mixed $default): mixed
     {
-        return property_exists($this, $name) ? $this->{$name} : $default;
+        if (! property_exists($this, $name)) {
+            return $default;
+        }
+
+        if (! (new ReflectionProperty($this, $name))->isInitialized($this)) {
+            throw IntegrityConfigurationException::uninitializedProperty($this, $name);
+        }
+
+        return $this->{$name};
     }
 
     /**

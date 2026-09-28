@@ -43,9 +43,20 @@ class VerifyCommand extends Command
                 return self::INVALID;
             }
 
-            $result = $id !== null
-                ? $checker->checkModel($checker->findModel($class, $this->castKey($class, $id)))
-                : $checker->checkType($class, $failFast);
+            if ($id !== null) {
+                $found = $checker->findModel($class, $this->castKey($class, $id));
+
+                // A key-only instance without any version: probably a typo in --id.
+                if (! $found->exists && $checker->getHistory($found)->isEmpty()) {
+                    $this->error("No row and no recorded versions found for [{$class}] with key [{$id}].");
+
+                    return self::INVALID;
+                }
+
+                $result = $checker->checkModel($found);
+            } else {
+                $result = $checker->checkType($class, $failFast);
+            }
         } else {
             $result = $checker->checkAll($failFast);
         }

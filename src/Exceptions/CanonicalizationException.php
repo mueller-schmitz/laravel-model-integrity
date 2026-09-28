@@ -10,7 +10,11 @@ class CanonicalizationException extends RuntimeException
 {
     public static function unsupportedType(string $path, string $type): self
     {
-        return new self("Cannot canonicalize value of type [{$type}] at [{$path}].");
+        $hint = str_starts_with($type, 'resource')
+            ? ' Binary columns (e.g. PostgreSQL bytea) are not supported by hash format 1; exclude them via $integrityExcept.'
+            : '';
+
+        return new self("Cannot canonicalize value of type [{$type}] at [{$path}].".$hint);
     }
 
     public static function nonFiniteFloat(string $path): self

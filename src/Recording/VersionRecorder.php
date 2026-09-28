@@ -195,7 +195,7 @@ class VersionRecorder
     {
         $key = $model->getKey();
 
-        return is_scalar($key) ? (string) $key : throw IntegrityConfigurationException::rowMissing($model);
+        return is_scalar($key) && $key !== '' ? (string) $key : throw IntegrityConfigurationException::missingKey($model);
     }
 
     private function intValue(mixed $value): int
