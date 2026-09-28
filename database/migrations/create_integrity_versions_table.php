@@ -48,7 +48,8 @@ return new class extends Migration
             // Values are always written in UTC.
             $table->dateTime('created_at', 6);
 
-            $table->unique(['versionable_type', 'versionable_id', 'version']);
+            // Explicit name: the generated one exceeds MySQL's 64 character identifier limit.
+            $table->unique(['versionable_type', 'versionable_id', 'version'], $this->table().'_versionable_version_unique');
             $table->index(['actor_type', 'actor_id']);
         });
     }

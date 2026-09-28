@@ -39,6 +39,18 @@ it('enforces a unique global sequence and unique versions per model', function (
         ->toContain(['versionable_type', 'versionable_id', 'version']);
 });
 
+it('keeps index names within the identifier limit of every supported database', function (): void {
+    // MySQL and MariaDB reject identifiers longer than 64 characters,
+    // PostgreSQL silently truncates them to 63.
+    $tooLong = collect(Schema::getIndexes('integrity_versions'))
+        ->pluck('name')
+        ->filter(fn (string $name): bool => strlen($name) > 63)
+        ->values()
+        ->all();
+
+    expect($tooLong)->toBe([]);
+});
+
 it('creates the heads table with the global head', function (): void {
     expect(Schema::hasColumns('integrity_heads', ['chain', 'sequence', 'hash', 'updated_at']))->toBeTrue();
 
