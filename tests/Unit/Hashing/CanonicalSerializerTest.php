@@ -110,6 +110,20 @@ describe('scalars', function (): void {
         $this->serializer->normalize($value);
     })->with([NAN, INF, -INF])->throws(CanonicalizationException::class);
 
+    it('rejects invalid utf-8 keys with their path', function (): void {
+        $this->serializer->normalize(['meta' => ["bad\xFFkey" => 1]]);
+    })->throws(CanonicalizationException::class, 'meta');
+
+    it('explains how to exclude binary resources', function (): void {
+        $handle = fopen('php://memory', 'r');
+
+        try {
+            $this->serializer->normalize(['avatar' => $handle]);
+        } finally {
+            fclose($handle);
+        }
+    })->throws(CanonicalizationException::class, '$integrityExcept');
+
     it('rejects invalid utf-8 strings', function (): void {
         $this->serializer->normalize(['avatar' => "\xFF\xFE"]);
     })->throws(CanonicalizationException::class, 'avatar');

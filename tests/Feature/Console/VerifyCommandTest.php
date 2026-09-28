@@ -80,6 +80,12 @@ it('stops after a broken chain with --fail-fast', function (): void {
     expect($result->errors()->pluck('type.value')->unique()->all())->toBe(['sequence_gap']);
 });
 
+it('reports an id without row and versions instead of passing', function (): void {
+    $this->artisan('model-integrity:verify', ['--model' => Invoice::class, '--id' => 999])
+        ->expectsOutputToContain('No row and no recorded versions')
+        ->assertExitCode(2);
+});
+
 it('rejects an id without a model', function (): void {
     $this->artisan('model-integrity:verify', ['--id' => 1])->assertExitCode(2);
 });

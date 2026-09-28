@@ -38,6 +38,9 @@ use MuellerSchmitz\ModelIntegrity\Recording\SnapshotBuilder;
  * is intact (the newer version's pointer is covered by its own hash, so the
  * older one must have been replaced), otherwise the newer one's hash mismatch
  * already explains it.
+ *
+ * The public methods are the API. Protected methods are internal and may
+ * change in minor releases before 1.0; do not rely on them in subclasses.
  */
 class IntegrityChecker
 {

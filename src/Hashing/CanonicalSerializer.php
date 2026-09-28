@@ -124,6 +124,10 @@ class CanonicalSerializer
         $normalized = [];
 
         foreach ($value as $key => $item) {
+            if (is_string($key)) {
+                $this->normalizeString($key, $path.'.'.$key);
+            }
+
             $normalized[$key] = $this->normalize($item, $path.'.'.$key);
         }
 

@@ -8,6 +8,24 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-28
+
+### Fixed
+
+- `touch()` and `$touches` no longer throw on immutable models when only excluded attributes such as `updated_at` change
+- Versions can no longer be created through Eloquent (`Version::create()`); only the recorder writes them
+- Clear errors for models without a key (e.g. composite keys), for declared but uninitialized `$integrity*` properties, for invalid UTF-8 in JSON keys and for binary columns
+- `model-integrity:verify --id` reports an unknown key instead of passing
+- Custom snapshot event names are validated (1–32 lowercase letters, digits or underscores)
+
+### Changed
+
+- CI runs on `ubuntu-24.04` and with a German locale, so the locale independence of float formatting is actually tested
+
+### Documentation
+
+- Minimum versions MySQL 8.0 and MariaDB 10.11, re-encryption with `APP_PREVIOUS_KEYS`, global scopes on related models, the meaning of `TruncatedChain`, internal protected methods of `IntegrityChecker`
+
 ## [0.1.0] - 2026-09-28
 
 First release.
@@ -28,5 +46,6 @@ First release.
 - Commands `model-integrity:install`, `model-integrity:grants` and `model-integrity:verify` (exit code 1 on violations)
 - Tested with PHP 8.3–8.5, Laravel 12 and 13, MySQL 8.0/8.4, MariaDB 10.11/11.4, PostgreSQL 14/17 and SQLite, including parallel writers, verification during writes and a database user restricted to the printed privileges
 
-[Unreleased]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mueller-schmitz/laravel-model-integrity/releases/tag/v0.1.0

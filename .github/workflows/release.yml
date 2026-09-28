@@ -17,7 +17,7 @@ jobs:
   release:
     name: Create GitHub release
     needs: [tests, static-analysis]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
 

@@ -38,6 +38,19 @@ class IntegrityConfigurationException extends LogicException
         ));
     }
 
+    public static function missingKey(Model $model): self
+    {
+        return new self(sprintf(
+            'Model [%s] has no key. Save it before recording; models without a single scalar primary key (e.g. composite keys) are not supported.',
+            $model::class,
+        ));
+    }
+
+    public static function uninitializedProperty(Model $model, string $property): self
+    {
+        return new self(sprintf('Property [$%s] on [%s] is declared without a value; assign one or remove the declaration.', $property, $model::class));
+    }
+
     public static function notTracked(string $class): self
     {
         return new self("Model [{$class}] does not use the HasIntegrity trait.");

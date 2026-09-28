@@ -30,7 +30,7 @@ The head locks are held until the surrounding transaction commits. Keep transact
 
 - PHP ^8.3
 - Laravel ^12.0 or ^13.0
-- MySQL, MariaDB or PostgreSQL 11+ (SQLite works for local testing; it has triggers, but no users or privileges)
+- MySQL 8.0+, MariaDB 10.11+ or PostgreSQL 11+ (SQLite works for local testing; it has triggers, but no users or privileges)
 
 ## Installation
 
@@ -107,7 +107,7 @@ All properties are optional; defaults come from `config/model-integrity.php`.
 - `save()` and `delete()` run in a database transaction: the model change and its version are committed together or not at all.
 - In `immutable` mode any update throws an `ImmutableModelException`. With `$integrityDeletes = 'forbid'` (default) deletes throw as well.
 - Saves that only change excluded attributes (e.g. `touch()`) do not create a version.
-- Each version holds a **full snapshot**, read from the stored database row and normalized by the model casts (decimals as strings, dates in UTC, JSON sorted). Encrypted attributes are stored as ciphertext. Define casts for all attributes whose type matters; uncast values are stored as the database driver returns them.
+- Each version holds a **full snapshot**, read from the stored database row and normalized by the model casts (decimals as strings, dates in UTC, JSON sorted). Encrypted attributes are stored as ciphertext; with `APP_PREVIOUS_KEYS` set, Laravel re-encrypts them on every save, so each save records a new version even if the plain text is unchanged. Define casts for all attributes whose type matters; uncast values are stored as the database driver returns them.
 
 ### Reason, context and actor
 
@@ -132,7 +132,7 @@ The actor is reset after every queue job.
 
 ### Relations
 
-`sync()`, `attach()` and `detach()` fire no model events. Declare the relation in `$integrityRelations` and record the change in the same transaction:
+`sync()`, `attach()` and `detach()` fire no model events. Declare the relation in `$integrityRelations` and record the change in the same transaction. The snapshot lists the related keys as the relation query returns them, so global scopes of the related model apply: soft-deleting a related model removes its key from the current state, and the verification reports drift until the relation is recorded again.
 
 ```php
 DB::transaction(function () use ($post, $tagIds) {
@@ -231,7 +231,7 @@ Schedule::command('model-integrity:verify')->dailyAt('03:00')->emailOutputOnFail
 | `BrokenChain` | A version is not referenced by its successor (per model or globally) |
 | `VersionGap` | Version numbers of a model are not consecutive |
 | `SequenceGap` | The global sequence has a gap: versions were removed |
-| `TruncatedChain` | A head (global or per model) does not match the last version: the end was cut off, the head was reset or removed |
+| `TruncatedChain` | A head (global or per model) does not match the last version: the end was cut off, the head is behind the last version, or it was removed |
 | `StateDrift` | The current row differs from the last snapshot, was deleted or restored outside the application, or was never recorded |
 | `Unverifiable` | Versions exist whose model class is missing, does not use the trait, or was recorded under a former morph class |
 

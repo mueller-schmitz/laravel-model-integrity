@@ -43,6 +43,9 @@ class Version extends Model
 
     protected static function booted(): void
     {
+        // The recorder inserts through the query builder; versions created
+        // through Eloquent would bypass the chain.
+        static::creating(fn () => throw ImmutableModelException::versionModification());
         static::updating(fn () => throw ImmutableModelException::versionModification());
         static::deleting(fn () => throw ImmutableModelException::versionModification());
     }
