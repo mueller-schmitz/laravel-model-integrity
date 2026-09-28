@@ -27,9 +27,11 @@ jobs:
       - name: Extract changelog section
         run: |
           version="${GITHUB_REF_NAME#v}"
+          # The section ends at the next version heading or at the link
+          # reference definitions at the end of the file.
           awk -v heading="## [${version}]" '
             index($0, heading) == 1 { found = 1; next }
-            found && index($0, "## [") == 1 { exit }
+            found && (index($0, "## [") == 1 || $0 ~ /^\[[^]]+\]: /) { exit }
             found { print }
           ' CHANGELOG.md > release-notes.md
 

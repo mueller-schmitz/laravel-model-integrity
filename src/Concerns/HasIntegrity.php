@@ -238,7 +238,8 @@ trait HasIntegrity
         return app(VersionRecorder::class)->record(
             $this,
             $event,
-            $snapshot ?? $this->buildIntegritySnapshot(),
+            // Built lazily, after the recorder holds the chain head lock.
+            $snapshot ?? fn (): array => $this->buildIntegritySnapshot(),
             $this->getIntegritySchemaVersion(),
             $this->integrityReason,
             $this->integrityContext,

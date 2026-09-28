@@ -7,19 +7,21 @@
 
 Immutable and versioned Eloquent models with a gapless, cryptographically verifiable history.
 
-> **Status:** early development (v0.1 in progress). Not ready for production use.
+> **Status:** v0.1 – the API may still change in minor versions before 1.0. Files, external anchors (OpenTimestamps, RFC 3161), crypto-shredding and an auditor export are planned.
 
 ## Scope
 
 This package is **tamper-evident, not tamper-proof**:
 
 - Changes through the application are either forbidden (`immutable`) or recorded as a new version (`versioned`).
-- Any manipulation outside the application (direct SQL, restored backups, edited rows) is **detected** during verification, not prevented.
+- Changing recorded versions outside the application is blocked by database triggers and privileges. A database administrator can still bypass both, for example by dropping the triggers or restoring a backup. Such manipulation is **detected** by the verification, not prevented.
 - The hash chain proves **integrity, not completeness**: operations that were never recorded are unknown to the chain. The state drift check compares the current model state against the last snapshot to surface such gaps.
 
 ## Performance cost
 
 All writes are appended to a single global chain. The chain head is locked with `SELECT ... FOR UPDATE`, which deliberately serialises recording writes across the whole application. This is the price for a gapless global sequence.
+
+Each recorded write adds a lock on the chain head, a read of the stored row, a read of the previous version, an insert and an update. In the test suite, 8 parallel processes record roughly 250–450 versions per second on MySQL, MariaDB and PostgreSQL (GitHub Actions runners, database in a container). Measure with your own workload before using it on write-heavy tables.
 
 ## Requirements
 
@@ -135,6 +137,8 @@ DB::transaction(function () use ($post, $tagIds) {
     $post->recordRelation('tags');
 });
 ```
+
+On MySQL and MariaDB (`REPEATABLE READ`), the first plain read of a transaction fixes what it sees. Avoid reading the relation earlier in the same transaction: the snapshot could then miss changes other processes committed in the meantime, which the state drift check would later report.
 
 ### History
 
@@ -263,6 +267,22 @@ python3 -c "import hashlib, json; e = json.load(open('envelope.json', encoding='
 ```
 
 Reference envelopes with their canonical strings and hashes are part of the test suite in the repository (`tests/Fixtures/hash-format-1.json`).
+
+## Versioning
+
+The package follows [Semantic Versioning](https://semver.org). Before 1.0, minor versions may contain breaking changes; they are listed in the [changelog](CHANGELOG.md).
+
+Hash formats are independent of package versions: a released hash format never changes, so versions recorded with any release stay verifiable with every later release.
+
+## Testing
+
+```bash
+composer test      # Pest, SQLite in memory by default
+composer analyse   # PHPStan, level max
+composer lint      # Pint
+```
+
+Run the suite against another database with the usual `DB_CONNECTION`, `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME` and `DB_PASSWORD` environment variables. The trigger, privilege and concurrency tests only run on MySQL, MariaDB and PostgreSQL; the privilege tests create and drop a database user and need an administrative account.
 
 ## License
 
