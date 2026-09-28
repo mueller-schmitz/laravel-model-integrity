@@ -68,7 +68,8 @@ trait HasIntegrity
             }
 
             if (! $model->isIntegritySoftDelete()) {
-                $model->integritySnapshotBeforeDelete = $model->buildIntegritySnapshot();
+                // Locked: a concurrent update must not slip between this read and the DELETE.
+                $model->integritySnapshotBeforeDelete = $model->buildIntegritySnapshot(lock: true);
             }
         });
 
@@ -249,9 +250,9 @@ trait HasIntegrity
     /**
      * @return array<string, mixed>
      */
-    protected function buildIntegritySnapshot(): array
+    protected function buildIntegritySnapshot(bool $lock = false): array
     {
-        return app(SnapshotBuilder::class)->build($this, $this->getIntegrityExcept(), $this->getIntegrityRelations());
+        return app(SnapshotBuilder::class)->build($this, $this->getIntegrityExcept(), $this->getIntegrityRelations(), $lock);
     }
 
     protected function hasRelevantIntegrityChanges(): bool

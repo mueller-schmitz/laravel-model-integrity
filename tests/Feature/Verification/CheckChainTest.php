@@ -47,6 +47,13 @@ it('passes an empty chain', function (): void {
     expect($this->checker->checkChain()->passes())->toBeTrue();
 });
 
+it('detects a removed global head instead of throwing', function (): void {
+    seedChain();
+    DB::table('integrity_heads')->where('chain', 'global')->delete();
+
+    expect(chainViolations($this->checker->checkChain()))->toBe(['truncated_chain:4']);
+});
+
 it('detects a chain emptied behind the head', function (): void {
     seedChain();
     DB::table('integrity_versions')->delete();

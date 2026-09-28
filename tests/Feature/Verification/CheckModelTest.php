@@ -6,6 +6,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
+use MuellerSchmitz\ModelIntegrity\Recording\ChainName;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Contract;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Post;
@@ -159,7 +160,8 @@ describe('removed versions', function (): void {
 
         $result = $this->checker->checkModel($this->invoice);
 
-        expect(violations($result))->toBe(['state_drift@-', 'truncated_chain@-'])
+        // Both the global head and the model head still point at the removed version.
+        expect(violations($result))->toBe(['state_drift@-', 'truncated_chain@-', 'truncated_chain@-'])
             ->and($result->lastValidVersion())->toBe(2);
     });
 
@@ -169,12 +171,65 @@ describe('removed versions', function (): void {
         expect(violations($this->checker->checkModel($this->invoice)))->toBe(['truncated_chain@-']);
     });
 
-    it('only sees the state drift when the last version and the head were removed together', function (): void {
-        // Undetectable by the chain alone; this is what external anchors are for.
+    it('detects a removed last version through the model head when the global head was adjusted', function (): void {
         DB::table('integrity_versions')->where('sequence', 3)->delete();
         setHead(2);
 
+        $result = $this->checker->checkModel($this->invoice);
+
+        expect(violations($result))->toBe(['state_drift@-', 'truncated_chain@-'])
+            ->and($result->errors()->first()->message)->toContain('model head');
+    });
+
+    it('only sees the state drift when the last version and both heads were removed together', function (): void {
+        // Undetectable by the chains alone; this is what external anchors are for.
+        DB::table('integrity_versions')->where('sequence', 3)->delete();
+        setHead(2);
+        DB::table('integrity_heads')->where('chain', ChainName::forModel($this->invoice))
+            ->update(['sequence' => 2, 'hash' => DB::table('integrity_versions')->where('sequence', 2)->value('hash')]);
+
         expect(violations($this->checker->checkModel($this->invoice)))->toBe(['state_drift@-']);
+    });
+});
+
+describe('model head', function (): void {
+    it('detects a model head reset behind the last version', function (): void {
+        DB::table('integrity_heads')->where('chain', ChainName::forModel($this->invoice))
+            ->update(['sequence' => 2, 'hash' => DB::table('integrity_versions')->where('sequence', 2)->value('hash')]);
+
+        $result = $this->checker->checkModel($this->invoice);
+
+        expect(violations($result))->toBe(['truncated_chain@-'])
+            ->and($result->errors()->sole()->message)->toContain('model head')
+            ->and($result->lastValidVersion())->toBe(3);
+    });
+
+    it('detects a model head with a foreign hash', function (): void {
+        DB::table('integrity_heads')->where('chain', ChainName::forModel($this->invoice))->update(['hash' => str_repeat('0', 64)]);
+
+        expect(violations($this->checker->checkModel($this->invoice)))->toBe(['truncated_chain@-']);
+    });
+
+    it('detects a removed model head', function (): void {
+        DB::table('integrity_heads')->where('chain', ChainName::forModel($this->invoice))->delete();
+
+        expect(violations($this->checker->checkModel($this->invoice)))->toBe(['truncated_chain@-']);
+    });
+
+    it('detects a removed global head instead of throwing', function (): void {
+        DB::table('integrity_heads')->where('chain', 'global')->delete();
+
+        $result = $this->checker->checkModel($this->invoice);
+
+        expect(violations($result))->toBe(['truncated_chain@-'])
+            ->and($result->errors()->sole()->message)->toContain('global');
+    });
+
+    it('detects a model head for a model without versions', function (): void {
+        DB::table('integrity_versions')->delete();
+        DB::table('integrity_heads')->where('chain', 'global')->update(['sequence' => 0, 'hash' => null]);
+
+        expect(violations($this->checker->checkModel($this->invoice)))->toBe(['state_drift@-', 'truncated_chain@-']);
     });
 });
 

@@ -20,6 +20,7 @@ use MuellerSchmitz\ModelIntegrity\Exceptions\InvalidEnvelopeException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\UnsupportedHashFormatException;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
+use MuellerSchmitz\ModelIntegrity\Recording\ChainName;
 use MuellerSchmitz\ModelIntegrity\Recording\ModelOptions;
 use MuellerSchmitz\ModelIntegrity\Recording\SnapshotBuilder;
 
@@ -263,10 +264,18 @@ class IntegrityChecker
             $previous = $version;
         }
 
-        $head = $this->head();
+        $head = $this->head(ChainName::GLOBAL);
         $lastSequence = $previous->sequence ?? 0;
 
-        if ($head['sequence'] > $lastSequence) {
+        if ($head === null) {
+            $errors[] = $this->error(
+                IntegrityErrorType::TruncatedChain,
+                "The global chain head is missing; the last stored version has sequence {$lastSequence}.",
+                [null, null],
+                null,
+                $lastSequence,
+            );
+        } elseif ($head['sequence'] > $lastSequence) {
             $errors[] = $this->truncatedError([null, null], $head['sequence'], $lastSequence);
         } elseif ($head['sequence'] < $lastSequence || $head['hash'] !== $previous?->hash) {
             $errors[] = $this->headError([null, null], $head, $lastSequence);
@@ -288,6 +297,7 @@ class IntegrityChecker
 
         $this->checkVersionsOfModel($versions, $subject, $errors, $invalid);
         $this->checkGlobalNeighbours($versions, $subject, $errors, $invalid);
+        $this->checkModelHead($model, $versions->last(), $subject, $errors);
         $this->checkState($model, $versions->last(), $subject, $errors);
 
         return new IntegrityResult($errors, $versions->count(), $this->lastValidVersion($versions, $invalid));
@@ -360,8 +370,12 @@ class IntegrityChecker
         $own = $versions->keyBy('sequence');
         $all = $neighbours->union($own);
 
-        $head = $this->head();
+        $head = $this->head(ChainName::GLOBAL);
         $maxSequence = $this->maxSequence();
+
+        if ($head === null) {
+            $errors[] = $this->error(IntegrityErrorType::TruncatedChain, 'The global chain head is missing.', $subject);
+        }
 
         foreach ($versions as $version) {
             $sequence = $version->sequence;
@@ -382,6 +396,8 @@ class IntegrityChecker
                 if ($successor->global_prev_hash !== $version->hash) {
                     $errors[] = $this->globalLinkError($subject, $successor, $this->blame($version, $successor, $own));
                 }
+            } elseif ($head === null) {
+                // Reported once above.
             } elseif ($head['sequence'] > $sequence) {
                 $errors[] = $maxSequence === $sequence
                     ? $this->truncatedError($subject, $head['sequence'], $sequence)
@@ -409,6 +425,29 @@ class IntegrityChecker
     private function blame(Version $older, Version $newer, Collection $own): ?int
     {
         return $this->hashIsValid($newer) && $own->has($older->sequence) ? $older->version : null;
+    }
+
+    /**
+     * The model's head row must point at its last stored version.
+     *
+     * @param  array{string|null, string|null}  $subject
+     * @param  list<IntegrityError>  $errors
+     */
+    private function checkModelHead(Model $model, ?Version $last, array $subject, array &$errors): void
+    {
+        $head = $this->head(ChainName::forModel($model));
+
+        $message = match (true) {
+            $head === null && $last === null => null,
+            $head === null => "The model head is missing; the last stored version is {$last->version}.",
+            $last === null => "The model head is at version {$head['sequence']}, but no version is stored.",
+            $head['sequence'] !== $last->version || $head['hash'] !== $last->hash => "The model head (version {$head['sequence']}) does not match the last stored version ({$last->version}).",
+            default => null,
+        };
+
+        if ($message !== null) {
+            $errors[] = $this->error(IntegrityErrorType::TruncatedChain, $message, $subject, null, $last?->sequence);
+        }
     }
 
     /**
@@ -585,17 +624,17 @@ class IntegrityChecker
     }
 
     /**
-     * @return array{sequence: int, hash: string|null}
+     * @return array{sequence: int, hash: string|null}|null null when the head row is missing
      */
-    protected function head(): array
+    protected function head(string $chain): ?array
     {
         $head = DB::connection($this->connection())
             ->table(Config::string('model-integrity.tables.heads'))
-            ->where('chain', 'global')
+            ->where('chain', $chain)
             ->first();
 
         if ($head === null) {
-            throw IntegrityConfigurationException::headMissing('global');
+            return null;
         }
 
         return [

@@ -52,7 +52,7 @@ it('normalizes every attribute by its cast', function (): void {
 
     expect($this->builder->build($invoice))->toBe([
         'created_at' => '2026-09-28T10:00:00.000000Z',
-        'due_on' => '2026-10-15T00:00:00.000000Z',
+        'due_on' => '2026-10-15',
         'id' => $invoice->getKey(),
         'issued_at' => '2026-09-28T12:30:45.000000Z',
         'meta' => ['a' => ['x' => null, 'y' => true], 'b' => 1],
@@ -97,6 +97,34 @@ it('keeps null values', function (): void {
         ->meta->toBeNull()
         ->secret->toBeNull()
         ->note->toBeNull();
+});
+
+it('keeps date casts as plain dates regardless of the app timezone', function (): void {
+    Carbon::setTestNow();
+    config(['app.timezone' => 'Europe/Berlin']);
+    date_default_timezone_set('Europe/Berlin');
+
+    try {
+        $snapshot = $this->builder->build(createInvoiceQuietly(['due_on' => '2026-10-15']));
+
+        expect($snapshot['due_on'])->toBe('2026-10-15');
+    } finally {
+        date_default_timezone_set('UTC');
+    }
+});
+
+it('reads the row with a lock on request', function (): void {
+    DB::enableQueryLog();
+
+    $this->builder->build(createInvoiceQuietly(), lock: true);
+
+    $select = collect(DB::getQueryLog())->pluck('query')->first(fn (string $sql): bool => str_starts_with($sql, 'select'));
+
+    // SQLite has no row locks; Laravel's grammar drops the clause there.
+    expect($select)->toBeString()->when(
+        DB::connection()->getDriverName() !== 'sqlite',
+        fn ($sql) => $sql->toContain('for update'),
+    );
 });
 
 it('converts dates from the app timezone to utc', function (): void {
