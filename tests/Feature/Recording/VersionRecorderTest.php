@@ -110,6 +110,21 @@ it('stores actor, reason, context and schema version', function (): void {
     assertHashMatchesStoredRow($version);
 });
 
+it('builds a lazy snapshot once while holding the head lock', function (): void {
+    $calls = 0;
+
+    $version = $this->recorder->record($this->document, 'created', function () use (&$calls): array {
+        $calls++;
+
+        return ['title' => 'A'];
+    });
+
+    expect($calls)->toBe(1)
+        ->and($version->snapshot)->toBe(['title' => 'A']);
+
+    assertHashMatchesStoredRow($version);
+});
+
 it('stores string keys', function (): void {
     $record = UlidRecord::withoutEvents(fn () => UlidRecord::query()->create(['title' => 'U']));
 

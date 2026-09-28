@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace MuellerSchmitz\ModelIntegrity\Recording;
 
 use Carbon\CarbonImmutable;
+use Closure;
 use Illuminate\Database\Connection;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Database\Eloquent\Model;
@@ -35,13 +36,19 @@ class VersionRecorder
     ) {}
 
     /**
-     * @param  array<string, mixed>  $snapshot  canonical snapshot from the SnapshotBuilder
+     * Pass the snapshot as a closure whenever the stored row still exists: it
+     * is then built after the head lock is acquired. Under REPEATABLE READ
+     * (MySQL, MariaDB) the first plain read of a transaction fixes what it
+     * sees; reading before waiting for the lock would miss changes that other
+     * writers committed in the meantime, e.g. relation changes.
+     *
+     * @param  array<string, mixed>|Closure(): array<string, mixed>  $snapshot  canonical snapshot from the SnapshotBuilder
      * @param  array<string, mixed>|null  $context
      */
     public function record(
         Model $model,
         string $event,
-        array $snapshot,
+        array|Closure $snapshot,
         int $schemaVersion = 1,
         ?string $reason = null,
         ?array $context = null,
@@ -61,11 +68,16 @@ class VersionRecorder
             $type = $model->getMorphClass();
             $id = $this->modelKey($model);
 
+            // A locking read returns the latest committed version regardless of
+            // the transaction's snapshot; the head lock is held anyway.
             $previous = $connection->table($this->table('versions'))
                 ->where('versionable_type', $type)
                 ->where('versionable_id', $id)
                 ->orderByDesc('version')
+                ->lockForUpdate()
                 ->first(['version', 'hash']);
+
+            $snapshot = $snapshot instanceof Closure ? $snapshot() : $snapshot;
 
             $actor = $this->actors->resolve();
             $createdAt = CarbonImmutable::now('UTC');
