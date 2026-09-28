@@ -41,6 +41,17 @@ it('reads a version with typed attributes', function (): void {
         ->and($version->context)->toBe(['ip' => '127.0.0.1']);
 });
 
+it('returns snapshot and context with canonical key order', function (): void {
+    // MySQL's native JSON type reorders keys on storage.
+    $version = insertVersionRow([
+        'snapshot' => '{"total":"100.00","id":42,"meta":{"b":1,"a":2}}',
+        'context' => '{"source":"web","ip":"127.0.0.1"}',
+    ]);
+
+    expect($version->snapshot)->toBe(['id' => 42, 'meta' => ['a' => 2, 'b' => 1], 'total' => '100.00'])
+        ->and($version->context)->toBe(['ip' => '127.0.0.1', 'source' => 'web']);
+});
+
 it('reads created_at as utc regardless of the app timezone', function (): void {
     config(['app.timezone' => 'Europe/Berlin']);
     date_default_timezone_set('Europe/Berlin');

@@ -90,10 +90,42 @@ class Version extends Model
             'version' => 'integer',
             'hash_format' => 'integer',
             'schema_version' => 'integer',
-            'snapshot' => 'array',
             'actor_id' => 'string',
-            'context' => 'array',
         ];
+    }
+
+    /**
+     * @return Attribute<array<string, mixed>, never>
+     */
+    protected function snapshot(): Attribute
+    {
+        return Attribute::get(fn (mixed $value): array => $this->decodeCanonical($value) ?? []);
+    }
+
+    /**
+     * @return Attribute<array<string, mixed>|null, never>
+     */
+    protected function context(): Attribute
+    {
+        return Attribute::get(fn (mixed $value): ?array => $this->decodeCanonical($value));
+    }
+
+    /**
+     * Decodes stored JSON into canonical key order. MySQL's native JSON type
+     * reorders keys, so the stored order depends on the database.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function decodeCanonical(mixed $value): ?array
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $normalized = app(CanonicalSerializer::class)->normalize(json_decode($value, true, flags: JSON_THROW_ON_ERROR));
+
+        /** @var array<string, mixed>|null */
+        return is_array($normalized) ? $normalized : null;
     }
 
     /**

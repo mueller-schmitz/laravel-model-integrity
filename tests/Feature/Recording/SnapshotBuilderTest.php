@@ -100,6 +100,9 @@ it('keeps null values', function (): void {
 });
 
 it('converts dates from the app timezone to utc', function (): void {
+    // Some Carbon versions parse with the timezone of the mocked "now" instead
+    // of the default timezone, so the mock must not interfere here.
+    Carbon::setTestNow();
     config(['app.timezone' => 'Europe/Berlin']);
     date_default_timezone_set('Europe/Berlin');
 
