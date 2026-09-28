@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use MuellerSchmitz\ModelIntegrity\Console\GrantsCommand;
 use MuellerSchmitz\ModelIntegrity\Console\InstallCommand;
+use MuellerSchmitz\ModelIntegrity\Console\SnapshotCommand;
 use MuellerSchmitz\ModelIntegrity\Console\VerifyCommand;
 use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
@@ -44,6 +45,7 @@ class ModelIntegrityServiceProvider extends ServiceProvider
         $this->commands([
             GrantsCommand::class,
             InstallCommand::class,
+            SnapshotCommand::class,
             VerifyCommand::class,
         ]);
 

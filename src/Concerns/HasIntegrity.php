@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Config;
+use InvalidArgumentException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\ImmutableModelException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
@@ -142,6 +143,31 @@ trait HasIntegrity
 
         try {
             return $this->recordIntegrityVersion('relation_synced');
+        } finally {
+            $this->forgetIntegrityMetadata();
+        }
+    }
+
+    /**
+     * Records the current state as a new version without changing the model,
+     * e.g. after a schema change, a changed cast or newly declared relations
+     * made the last snapshot outdated. Allowed in immutable mode.
+     *
+     * Lifecycle events are recorded automatically and cannot be used here;
+     * 'created' is only allowed for a model without any version (backfill).
+     */
+    public function recordIntegritySnapshot(string $event = 'snapshot', ?string $reason = null): Version
+    {
+        if (in_array($event, ['updated', 'deleted', 'restored', 'force_deleted', 'relation_synced'], true)
+            || ($event === 'created' && $this->integrityVersions()->exists())) {
+            throw new InvalidArgumentException("Event [{$event}] is recorded automatically and cannot be used for a snapshot.");
+        }
+
+        $previousReason = $this->integrityReason;
+        $this->integrityReason = $reason ?? $previousReason;
+
+        try {
+            return $this->recordIntegrityVersion($event);
         } finally {
             $this->forgetIntegrityMetadata();
         }

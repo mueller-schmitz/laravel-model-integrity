@@ -8,10 +8,13 @@ use Illuminate\Console\Command;
 use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
+use MuellerSchmitz\ModelIntegrity\Console\Concerns\ResolvesModelClasses;
 use MuellerSchmitz\ModelIntegrity\Database\GrantStatements;
 
 class GrantsCommand extends Command
 {
+    use ResolvesModelClasses;
+
     protected $signature = 'model-integrity:grants
         {--user= : Database user of the application (default: the connection user)}
         {--host=% : Host part of the MySQL/MariaDB account}
@@ -79,15 +82,5 @@ class GrantsCommand extends Command
         sort($tables);
 
         return $tables;
-    }
-
-    private function stringOption(string $name): ?string
-    {
-        $value = $this->option($name);
-
-        // Artisan::call() passes numbers as int; the command line always passes strings.
-        $value = is_int($value) ? (string) $value : $value;
-
-        return is_string($value) && $value !== '' ? $value : null;
     }
 }
