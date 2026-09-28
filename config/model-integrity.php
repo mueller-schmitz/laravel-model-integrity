@@ -30,6 +30,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Append-only triggers
+    |--------------------------------------------------------------------------
+    |
+    | The migrations install database triggers that reject UPDATE and DELETE on
+    | recorded versions (MySQL, MariaDB, PostgreSQL, SQLite). Disable only if
+    | the database user may not create triggers, and restrict privileges with
+    | the statements from `php artisan model-integrity:grants` instead.
+    |
+    */
+
+    'append_only_triggers' => env('MODEL_INTEGRITY_APPEND_ONLY_TRIGGERS', true),
+
+    /*
+    |--------------------------------------------------------------------------
     | Model defaults
     |--------------------------------------------------------------------------
     |

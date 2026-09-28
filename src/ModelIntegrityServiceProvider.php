@@ -8,6 +8,9 @@ use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
+use MuellerSchmitz\ModelIntegrity\Console\GrantsCommand;
+use MuellerSchmitz\ModelIntegrity\Console\InstallCommand;
+use MuellerSchmitz\ModelIntegrity\Console\VerifyCommand;
 use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
 use MuellerSchmitz\ModelIntegrity\Recording\ActorResolver;
@@ -37,6 +40,12 @@ class ModelIntegrityServiceProvider extends ServiceProvider
         if (! $this->app->runningInConsole()) {
             return;
         }
+
+        $this->commands([
+            GrantsCommand::class,
+            InstallCommand::class,
+            VerifyCommand::class,
+        ]);
 
         $this->publishes([
             __DIR__.'/../config/model-integrity.php' => config_path('model-integrity.php'),

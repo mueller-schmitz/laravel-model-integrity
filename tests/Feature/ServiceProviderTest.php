@@ -35,13 +35,22 @@ it('publishes the config under its tag', function (): void {
         ->and(array_values($paths)[0])->toBe(config_path('model-integrity.php'));
 });
 
-it('publishes both migrations under its tag', function (): void {
+it('publishes the migrations under its tag in dependency order', function (): void {
     $paths = ServiceProvider::pathsToPublish(ModelIntegrityServiceProvider::class, 'model-integrity-migrations');
 
     expect($paths)->toHaveCount(1)
         ->and(array_values($paths)[0])->toBe(database_path('migrations'));
 
-    $source = array_key_first($paths);
+    // Timestamp prefixes keep the order when Laravel renames them on publish;
+    // Laravel only rewrites names that already carry a timestamp.
+    $files = array_map(basename(...), glob(array_key_first($paths).'/*.php'));
+    sort($files);
 
-    expect(glob($source.'/*.php'))->toHaveCount(2);
+    expect($files)->each->toMatch('/^\d{4}_\d{2}_\d{2}_\d{6}_/')
+        ->and(array_map(fn (string $file): string => preg_replace('/^\d{4}_\d{2}_\d{2}_\d{6}_/', '', $file), $files))
+        ->toBe([
+            'create_integrity_versions_table.php',
+            'create_integrity_heads_table.php',
+            'create_integrity_append_only_triggers.php',
+        ]);
 });
