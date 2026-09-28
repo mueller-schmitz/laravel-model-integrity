@@ -8,6 +8,8 @@ use Closure;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Casts\AsArrayObject;
 use Illuminate\Database\Eloquent\Casts\AsCollection;
+use Illuminate\Database\Eloquent\Casts\AsEnumArrayObject;
+use Illuminate\Database\Eloquent\Casts\AsEnumCollection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
@@ -24,6 +26,14 @@ class SnapshotBuilder
 {
     /** Casts decoded from their JSON representation instead of Laravel's cast objects. */
     private const array JSON_CASTS = ['array', 'json', 'object', 'collection'];
+
+    /** Cast classes storing JSON, including their parameterized forms (AsCollection::using(), AsEnumCollection::of()). */
+    private const array JSON_CAST_CLASSES = [
+        AsArrayObject::class,
+        AsCollection::class,
+        AsEnumArrayObject::class,
+        AsEnumCollection::class,
+    ];
 
     /**
      * Built-in casts normalized by Laravel's cast implementation. Checked before
@@ -98,13 +108,14 @@ class SnapshotBuilder
             return $isDate ? $this->callProtected($model, 'asDateTime', $value) : $value;
         }
 
-        $type = strtolower(explode(':', $cast, 2)[0]);
+        $castClass = explode(':', $cast, 2)[0];
+        $type = strtolower($castClass);
 
         return match (true) {
             // Keep the stored ciphertext; decrypting would put plain text into the history.
             str_contains($type, 'encrypted') => $value,
             in_array($type, self::JSON_CASTS, true),
-            in_array($cast, [AsArrayObject::class, AsCollection::class], true) => $this->decodeJson($value),
+            in_array($castClass, self::JSON_CAST_CLASSES, true) => $this->decodeJson($value),
             // Plain dates carry no time: keep them as Y-m-d instead of shifting
             // midnight of the app timezone to UTC.
             in_array($type, ['date', 'immutable_date'], true) => $this->plainDate($model, $key, $value),

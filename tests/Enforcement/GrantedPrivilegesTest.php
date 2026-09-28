@@ -66,6 +66,17 @@ beforeEach(function (): void {
         ->filter(fn (string $line): bool => $line !== '' && ! str_starts_with($line, '--'))
         ->each(fn (string $statement) => $this->admin->unprepared($statement));
 
+    // The application's own tables, as any application user has them.
+    foreach (['invoices', 'posts', 'tags', 'post_tag'] as $table) {
+        $this->admin->unprepared($this->admin->getDriverName() === 'pgsql'
+            ? "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE \"{$table}\" TO \"".RESTRICTED_USER.'"'
+            : "GRANT SELECT, INSERT, UPDATE, DELETE ON `{$this->admin->getDatabaseName()}`.`{$table}` TO '".RESTRICTED_USER."'@'%'");
+
+        if ($this->admin->getDriverName() === 'pgsql' && $table !== 'post_tag') {
+            $this->admin->unprepared("GRANT USAGE ON SEQUENCE \"{$table}_id_seq\" TO \"".RESTRICTED_USER.'"');
+        }
+    }
+
     $this->restricted = connectionAs('mi_restricted', ['username' => RESTRICTED_USER, 'password' => RESTRICTED_PASSWORD]);
 });
 

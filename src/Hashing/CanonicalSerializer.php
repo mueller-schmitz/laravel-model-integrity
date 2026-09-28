@@ -74,16 +74,29 @@ class CanonicalSerializer
             }
         }
 
-        [$mantissa, $exponent] = explode('e', sprintf('%.'.($digits - 1).'e', $value));
+        [$mantissa, $exponent] = explode('e', sprintf('%.'.($digits - 1).'e', abs($value)));
         $exponent = (int) $exponent;
+        $sign = $value < 0 ? '-' : '';
 
-        if ($exponent >= -7 && $exponent < 21) {
-            return sprintf('%.'.max(0, $digits - 1 - $exponent).'F', $value);
+        if ($exponent < -7 || $exponent >= 21) {
+            $mantissa = str_contains($mantissa, '.') ? rtrim(rtrim($mantissa, '0'), '.') : $mantissa;
+
+            return $sign.$mantissa.'E'.($exponent < 0 ? '-' : '+').abs($exponent);
         }
 
-        $mantissa = str_contains($mantissa, '.') ? rtrim(rtrim($mantissa, '0'), '.') : $mantissa;
+        // Fixed notation built from the shortest digits, so large values keep
+        // the round-trip form instead of their exact binary expansion.
+        $significant = str_replace('.', '', $mantissa);
 
-        return $mantissa.'E'.($exponent < 0 ? '-' : '+').abs($exponent);
+        if ($exponent < 0) {
+            return $sign.'0.'.str_repeat('0', -$exponent - 1).$significant;
+        }
+
+        $integerDigits = $exponent + 1;
+
+        return $sign.(strlen($significant) <= $integerDigits
+            ? str_pad($significant, $integerDigits, '0')
+            : substr($significant, 0, $integerDigits).'.'.substr($significant, $integerDigits));
     }
 
     private function normalizeString(string $value, string $path): string
