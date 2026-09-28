@@ -3,11 +3,17 @@
 declare(strict_types=1);
 
 use Illuminate\Support\ServiceProvider;
+use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
+use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
 use MuellerSchmitz\ModelIntegrity\ModelIntegrityServiceProvider;
 
 it('registers the service provider', function (): void {
     expect(app()->getProviders(ModelIntegrityServiceProvider::class))->toHaveCount(1);
 });
+
+it('registers the hashing services as singletons', function (string $class): void {
+    expect(app($class))->toBeInstanceOf($class)->toBe(app($class));
+})->with([CanonicalSerializer::class, Hasher::class]);
 
 it('merges the package config', function (): void {
     expect(config('model-integrity.tables'))->toBe([
