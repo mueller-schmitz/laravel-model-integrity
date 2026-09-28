@@ -15,17 +15,18 @@ First release.
 ### Added
 
 - `HasIntegrity` trait: records `created`, `updated`, `deleted`, `restored`, `force_deleted` and `relation_synced` versions with full snapshots, in the same transaction as the model change
-- Two hash chains: one per model and one global chain with a gapless sequence, serialized by a lock on the chain head
+- Two hash chains: one per model and one global chain with a gapless sequence, serialized by locks on head rows (one global, one per model)
 - `immutable` and `versioned` modes, `forbid` and `record` delete modes, excluded attributes, declared relations, snapshot schema versions
-- Snapshots read from the stored row and normalized by model casts (decimals as strings, dates in UTC, sorted JSON, enums, encrypted attributes as ciphertext)
+- Snapshots read from the stored row and normalized by model casts (decimals as strings, datetimes in UTC, plain dates as `Y-m-d`, sorted JSON, enums, JSON cast classes, encrypted attributes as ciphertext)
 - Actor resolution (`ModelIntegrity::actingAs()`, reset after queue jobs), reason and context per write
+- `recordIntegritySnapshot()` and `model-integrity:snapshot` to record a new baseline after schema changes
 - Hash format 1: SHA-256 over a canonical JSON envelope, specified in the README and pinned by reference vectors
-- `IntegrityChecker` (class and facade): `checkModel()`, `checkType()`, `checkChain()`, `checkAll()`, `getHistory()` with per-version `isValid()`, `versionAt()`; detects hash mismatches, broken chains, version and sequence gaps, truncated chains and state drift
+- `IntegrityChecker` (class and facade): `checkModel()`, `checkType()`, `checkChain()`, `checkAll()`, `getHistory()` with per-version `isValid()`, `versionAt()`; detects hash mismatches, broken chains, version and sequence gaps, truncated chains, state drift and unverifiable types; checks run with a consistent read view and stream versions in chunks
 - Model shortcuts `history()`, `verifyIntegrity()`, `versionAt()`
 - Events `VersionRecorded` (after commit) and `IntegrityViolationDetected`
-- Append-only triggers on `integrity_versions` for MySQL, MariaDB, PostgreSQL and SQLite (`append_only_triggers` config option)
+- Append-only triggers on `integrity_versions` for MySQL, MariaDB, PostgreSQL and SQLite (`append_only_triggers` config option, `model-integrity:triggers` command)
 - Commands `model-integrity:install`, `model-integrity:grants` and `model-integrity:verify` (exit code 1 on violations)
-- Tested with PHP 8.3–8.5, Laravel 12 and 13, MySQL 8.0/8.4, MariaDB 10.11/11.4, PostgreSQL 14/17 and SQLite, including parallel writers
+- Tested with PHP 8.3–8.5, Laravel 12 and 13, MySQL 8.0/8.4, MariaDB 10.11/11.4, PostgreSQL 14/17 and SQLite, including parallel writers, verification during writes and a database user restricted to the printed privileges
 
 [Unreleased]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/mueller-schmitz/laravel-model-integrity/releases/tag/v0.1.0

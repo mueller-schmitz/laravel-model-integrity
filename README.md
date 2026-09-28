@@ -14,14 +14,17 @@ Immutable and versioned Eloquent models with a gapless, cryptographically verifi
 This package is **tamper-evident, not tamper-proof**:
 
 - Changes through the application are either forbidden (`immutable`) or recorded as a new version (`versioned`).
-- Changing recorded versions outside the application is blocked by database triggers and privileges. A database administrator can still bypass both, for example by dropping the triggers or restoring a backup. Such manipulation is **detected** by the verification, not prevented.
+- Changing recorded versions outside the application is blocked by database triggers and privileges. A database administrator can still bypass both, for example by dropping the triggers. Changing or removing single versions afterwards is **detected** by the verification, not prevented.
 - The hash chain proves **integrity, not completeness**: operations that were never recorded are unknown to the chain. The state drift check compares the current model state against the last snapshot to surface such gaps.
+- The chain is a plain SHA-256 chain without a secret. Whoever can write to both integrity tables can rewrite it consistently from any point on, and restoring an older backup yields a consistent but outdated history. Until external anchors exist (planned for v0.3), only the state drift check may notice such cases, and only if the model rows differ from the rewritten snapshots.
 
 ## Performance cost
 
 All writes are appended to a single global chain. The chain head is locked with `SELECT ... FOR UPDATE`, which deliberately serialises recording writes across the whole application. This is the price for a gapless global sequence.
 
-Each recorded write adds a lock on the chain head, a read of the stored row, a read of the previous version, an insert and an update. In the test suite, 8 parallel processes record roughly 250–450 versions per second on MySQL, MariaDB and PostgreSQL (GitHub Actions runners, database in a container). Measure with your own workload before using it on write-heavy tables.
+Each recorded write adds two locking reads (global head and model head), a read of the stored row, an insert and two updates. In the test suite, 8 parallel processes record roughly 250–450 versions per second on MySQL, MariaDB and PostgreSQL (GitHub Actions runners, database in a container). Measure with your own workload before using it on write-heavy tables.
+
+The head locks are held until the surrounding transaction commits. Keep transactions that record versions short, and expect deadlocks when several transactions record versions of several models in different orders; the database aborts one of them, and the caller has to retry.
 
 ## Requirements
 
@@ -47,9 +50,9 @@ Model events are not the only way to change data. Queries like `Invoice::where(.
 
 The migrations install triggers that reject `UPDATE` and `DELETE` on `integrity_versions` (MySQL, MariaDB, PostgreSQL, SQLite). On PostgreSQL they reject `TRUNCATE` as well; on MySQL and MariaDB `TRUNCATE` fires no triggers and is prevented by privileges.
 
-- MySQL with binary logging requires `SUPER` or `log_bin_trust_function_creators = 1` to create triggers.
-- If the migration user may not create triggers, set `MODEL_INTEGRITY_APPEND_ONLY_TRIGGERS=false` and rely on privileges.
-- The chain head (`integrity_heads`) is updated on every write and has no trigger; tampering with it is detected by the verification.
+- MySQL with binary logging requires `SUPER` or `log_bin_trust_function_creators = 1` to create triggers (MySQL 8.4: the `SET_ANY_DEFINER` privilege).
+- If the migration user may not create triggers, set `MODEL_INTEGRITY_APPEND_ONLY_TRIGGERS=false` and rely on privileges. `php artisan model-integrity:triggers` installs them later (`--remove` drops them).
+- The head rows (`integrity_heads`) are updated on every write and have no trigger. A head that no longer matches the last version is reported by the verification.
 
 ### Privileges
 
@@ -62,11 +65,11 @@ php artisan model-integrity:grants --user=app --host=10.0.0.% --all-tables  # My
 
 The command only prints the statements; review and run them with an administrative user.
 
-- **MySQL/MariaDB:** privileges granted on the whole database (`GRANT ALL ON app.*`) cannot be narrowed per table. `--all-tables` prints a `REVOKE` for the database-wide privileges and table privileges for every table instead.
-- **PostgreSQL:** the application user must not own the integrity tables; owners can change or drop them regardless of privileges.
+- **MySQL/MariaDB:** privileges granted on the whole database (`GRANT ALL ON app.*`) cannot be narrowed per table. `--all-tables` prints a `REVOKE` for the database-wide privileges and table privileges for every table and view instead. Global privileges (`ON *.*`) and accounts with other hosts are not covered.
+- **PostgreSQL:** the application user must not own the integrity tables; owners can change or drop them regardless of privileges. `--host` and `--all-tables` do not apply.
 - Run migrations with a separate user that may alter the schema.
 
-Triggers and privileges are tested against MySQL 8.0/8.4, MariaDB 10.11/11.4 and PostgreSQL 14/17, including a restricted user that is denied `UPDATE` and `DELETE`.
+Triggers and privileges are tested against MySQL 8.0/8.4, MariaDB 10.11/11.4 and PostgreSQL 14/17: a user with exactly these privileges records, deletes and verifies through the package and is denied `UPDATE` and `DELETE` on versions.
 
 ## Usage
 
@@ -138,7 +141,7 @@ DB::transaction(function () use ($post, $tagIds) {
 });
 ```
 
-On MySQL and MariaDB (`REPEATABLE READ`), the first plain read of a transaction fixes what it sees. Avoid reading the relation earlier in the same transaction: the snapshot could then miss changes other processes committed in the meantime, which the state drift check would later report.
+On MySQL and MariaDB (`REPEATABLE READ`), the first non-locking read of a transaction fixes what the transaction sees, whichever table it reads. Load the model outside the transaction or with `lockForUpdate()`, and do not read other data first: otherwise the snapshot may miss changes other processes committed in the meantime, which the state drift check would later report.
 
 ### History
 
@@ -146,6 +149,21 @@ On MySQL and MariaDB (`REPEATABLE READ`), the first plain read of a transaction 
 $invoice->integrityVersions()->get(); // query builder, oldest first
 $invoice->history();                  // collection, see Verification
 ```
+
+### After schema changes
+
+Every version stores a full snapshot. After a migration adds or removes a column, after a cast, `$integrityExcept` or `$integrityRelations` changes, the current rows no longer match their last snapshots and the verification reports `StateDrift` for every model. Record a new baseline:
+
+```bash
+php artisan model-integrity:snapshot --model="App\Models\Invoice" --reason="Added reference column"
+php artisan model-integrity:snapshot --all
+```
+
+The command records a `snapshot` version for every model whose last snapshot has an older `$integritySchemaVersion` or no longer matches the row, and a `created` version for rows that have none. Bump `$integritySchemaVersion` with the change so the history shows when the structure changed. For a single model: `$invoice->recordIntegritySnapshot('schema_migrated', 'Added reference column')`.
+
+Datetime columns without a timezone are interpreted in the application timezone when they are read. Do not change `app.timezone` after the first version was recorded, or every stored timestamp would drift. Plain `date` casts are stored as `Y-m-d` and are not affected.
+
+Decide on the morph map before the first version is recorded: versions store the morph class, and a renamed class or alias leaves the old history under the old name (reported as `Unverifiable`).
 
 ### Limits
 
@@ -157,6 +175,8 @@ The package records what goes through Eloquent model events. These bypass it and
 - a model class that overrides `save()` or `delete()` itself replaces the transactional wrapper of the trait
 
 Such changes are not prevented, but they are detected: the state drift check compares the current row with the last snapshot.
+
+Updating a model whose row was deleted concurrently throws instead of recording a version for a missing row; lock rows that may be deleted (`lockForUpdate()`) before updating them.
 
 Model and integrity tables must use the same database connection, otherwise both cannot be written in one transaction.
 
@@ -211,16 +231,19 @@ Schedule::command('model-integrity:verify')->dailyAt('03:00')->emailOutputOnFail
 | `BrokenChain` | A version is not referenced by its successor (per model or globally) |
 | `VersionGap` | Version numbers of a model are not consecutive |
 | `SequenceGap` | The global sequence has a gap: versions were removed |
-| `TruncatedChain` | The chain head does not match the last version: the end was cut off or the head was reset |
+| `TruncatedChain` | A head (global or per model) does not match the last version: the end was cut off, the head was reset or removed |
 | `StateDrift` | The current row differs from the last snapshot, was deleted or restored outside the application, or was never recorded |
+| `Unverifiable` | Versions exist whose model class is missing, does not use the trait, or was recorded under a former morph class |
 
-When a version is replaced and re-hashed, the successor no longer references it, so the replaced version is reported as `BrokenChain`. Violations dispatch an `IntegrityViolationDetected` event with the result (and the model for `checkModel()`).
+When a version is replaced and re-hashed, the successor no longer references it, so the replaced version is reported as `BrokenChain`. Violations dispatch an `IntegrityViolationDetected` event with the result (and the model for `checkModel()`). `lastValidVersion()` is only set by `checkModel()`.
+
+Checks run in a read transaction with `REPEATABLE READ`, so versions recorded while a check runs do not produce false findings. Inside a caller's own transaction the caller's isolation level applies.
 
 ### Limits
 
-- If the last versions **and** the chain head are removed together, the chain itself is consistent again. Only the state drift check notices it if the model state differs. External anchors (planned for v0.3) close this gap.
+- If the last versions **and** both heads (global and per model) are rewritten together, the chains are consistent again. Only the state drift check notices it if the model state differs. External anchors (planned for v0.3) close this gap; see Scope.
 - `checkAll()` discovers models through their recorded versions. Tables whose models never had a version are only checked by `checkType()`.
-- `checkType()` keeps the recorded keys of the type in memory (roughly 50 MB per million models).
+- `checkType()` keeps the recorded keys of the type in memory (roughly 50 MB per million models). Versions are streamed in chunks, so long histories do not.
 
 ## Hash format
 
@@ -254,13 +277,13 @@ No other fields are allowed. The database `id` is not part of the hash.
 - Object keys are sorted recursively by Unicode code point (equal to UTF-8 byte order); arrays keep their order.
 - No insignificant whitespace.
 - UTF-8 output. Only characters JSON requires are escaped: `"`, `\` and control characters below U+0020 (`\b`, `\t`, `\n`, `\f`, `\r`, otherwise lowercase `\u00xx`). Slashes, non-ASCII characters and U+2028/U+2029 are not escaped.
-- Values: `null`, booleans, integers and strings only. Decimals and floats are stored as strings, dates as UTC ISO 8601 strings with microseconds.
+- Values: `null`, booleans, integers and strings only. Decimals are stored as strings with their scale, floats as their shortest round-trip decimal string (like `JSON.stringify`: fixed notation for exponents from -7 to 20, otherwise `1.5E+25`), datetimes as UTC ISO 8601 strings with microseconds, plain dates as `Y-m-d`.
 - An empty object and an empty array are both encoded as `[]`.
 - Binary (non UTF-8) values are not supported and must be excluded from snapshots.
 
 ### Recomputing a hash
 
-These rules match the defaults of common JSON libraries. With Python, for an envelope stored in `envelope.json`:
+These rules match the defaults of common JSON libraries. The stored `snapshot` and `context` columns must be canonicalized first (MySQL's JSON type reorders keys on storage); the package's `Version::toEnvelope()` does that. With Python, for an envelope stored in `envelope.json`:
 
 ```bash
 python3 -c "import hashlib, json; e = json.load(open('envelope.json', encoding='utf-8')); print(hashlib.sha256(json.dumps(e, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')).hexdigest())"
@@ -282,7 +305,7 @@ composer analyse   # PHPStan, level max
 composer lint      # Pint
 ```
 
-Run the suite against another database with the usual `DB_CONNECTION`, `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME` and `DB_PASSWORD` environment variables. The trigger, privilege and concurrency tests only run on MySQL, MariaDB and PostgreSQL; the privilege tests create and drop a database user and need an administrative account.
+Run the suite against another database with the usual `DB_CONNECTION`, `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME` and `DB_PASSWORD` environment variables. The trigger, privilege and concurrency tests only run on MySQL, MariaDB and PostgreSQL; the privilege tests create and drop the database user `mi_restricted` and need an administrative account. The suite is not meant for `pest --parallel`: the concurrency workers and the privilege tests share one database and one user.
 
 ## License
 
