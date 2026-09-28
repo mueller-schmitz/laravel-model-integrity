@@ -18,6 +18,8 @@ class AppendOnlyTriggers
 {
     private const string MESSAGE = 'Recorded versions are append-only.';
 
+    private const string LONGEST_SUFFIX = '_append_only_truncate';
+
     public function install(Connection $connection, string $table): void
     {
         $this->run($connection, $this->installStatements($connection, $table));
@@ -29,13 +31,15 @@ class AppendOnlyTriggers
     }
 
     /**
+     * Drops existing triggers first, so installing is idempotent.
+     *
      * @return list<string>
      */
     public function installStatements(Connection $connection, string $table): array
     {
         [$wrapped, $name] = $this->names($connection, $table);
 
-        return match ($connection->getDriverName()) {
+        return [...$this->uninstallStatements($connection, $table), ...match ($connection->getDriverName()) {
             'mysql', 'mariadb' => [
                 "CREATE TRIGGER `{$name}_append_only_update` BEFORE UPDATE ON {$wrapped} FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '".self::MESSAGE."'",
                 "CREATE TRIGGER `{$name}_append_only_delete` BEFORE DELETE ON {$wrapped} FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '".self::MESSAGE."'",
@@ -50,7 +54,7 @@ class AppendOnlyTriggers
                 "CREATE TRIGGER \"{$name}_append_only_delete\" BEFORE DELETE ON {$wrapped} BEGIN SELECT RAISE(ABORT, '".self::MESSAGE."'); END",
             ],
             default => [],
-        };
+        }];
     }
 
     /**
@@ -96,6 +100,11 @@ class AppendOnlyTriggers
         // identifiers are accepted before they become part of the statements.
         if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $name) !== 1) {
             throw new InvalidArgumentException("Table name [{$name}] must consist of letters, digits and underscores.");
+        }
+
+        // MySQL rejects identifiers over 64 characters, PostgreSQL truncates to 63.
+        if (strlen($name.self::LONGEST_SUFFIX) > 63) {
+            throw new InvalidArgumentException("Table name [{$name}] is too long: trigger names must not exceed 63 characters.");
         }
 
         return [$connection->getQueryGrammar()->wrapTable($table), $name];

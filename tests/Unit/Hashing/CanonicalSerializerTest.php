@@ -67,6 +67,13 @@ describe('scalars', function (): void {
         [-0.0, '0'],
         [5.0E-324, '5E-324'],
         [PHP_FLOAT_MAX, '1.7976931348623157E+308'],
+        // Beyond 2^53 the exact decimal expansion has more digits than the
+        // shortest round-trip form; the shortest form is used, like JSON.stringify.
+        [1.2345678901234568E+20, '123456789012345680000'],
+        [9007199254740994.0, '9007199254740994'],
+        [-1.5E+18, '-1500000000000000000'],
+        [123456789.123456789, '123456789.12345679'],
+        [-0.000001, '-0.000001'],
     ]);
 
     it('formats floats independently of the precision ini settings', function (): void {

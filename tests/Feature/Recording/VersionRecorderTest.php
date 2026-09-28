@@ -7,9 +7,11 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use MuellerSchmitz\ModelIntegrity\Events\VersionRecorded;
 use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
+use MuellerSchmitz\ModelIntegrity\Exceptions\UnsupportedHashFormatException;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
 use MuellerSchmitz\ModelIntegrity\ModelIntegrity;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
+use MuellerSchmitz\ModelIntegrity\Recording\ChainName;
 use MuellerSchmitz\ModelIntegrity\Recording\VersionRecorder;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Document;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\UlidRecord;
@@ -88,6 +90,53 @@ it('advances the global head', function (): void {
         ->and($head->hash)->toBe($last->hash);
 });
 
+it('keeps a head row per model', function (): void {
+    $this->recorder->record($this->document, 'created', ['title' => 'A']);
+    $last = $this->recorder->record($this->document, 'updated', ['title' => 'A2']);
+
+    $head = DB::table('integrity_heads')->where('chain', ChainName::forModel($this->document))->first();
+
+    expect(ChainName::forModel($this->document))
+        ->toBe('model:'.$this->document->getMorphClass().':'.$this->document->getKey())
+        ->and($head)->not->toBeNull()
+        ->and((int) $head->sequence)->toBe(2)
+        ->and($head->hash)->toBe($last->hash)
+        ->and(DB::table('integrity_heads')->count())->toBe(2);
+});
+
+it('takes version number and prev_hash from the model head instead of the versions table', function (): void {
+    $first = $this->recorder->record($this->document, 'created', ['title' => 'A']);
+
+    // A tampered model head is what the recorder continues from; the
+    // verification reports the mismatch with the stored versions.
+    DB::table('integrity_heads')->where('chain', ChainName::forModel($this->document))->update(['sequence' => 5, 'hash' => str_repeat('c', 64)]);
+
+    $next = $this->recorder->record($this->document, 'updated', ['title' => 'A2']);
+
+    expect($next->version)->toBe(6)
+        ->and($next->prev_hash)->toBe(str_repeat('c', 64))
+        ->and($next->global_prev_hash)->toBe($first->hash);
+});
+
+it('hashes long chain names', function (): void {
+    $model = new class extends Document
+    {
+        protected $table = 'documents';
+
+        public function getMorphClass(): string
+        {
+            return str_repeat('VeryLongNamespace\\', 12).'Document';
+        }
+    };
+    $model->forceFill(['id' => 42]);
+
+    $name = ChainName::forModel($model);
+
+    expect(strlen($name))->toBeLessThanOrEqual(191)
+        ->and($name)->toStartWith('model#')
+        ->and($name)->toBe(ChainName::forModel($model));
+});
+
 it('stores actor, reason, context and schema version', function (): void {
     $user = User::query()->create(['name' => 'Anna']);
 
@@ -124,6 +173,18 @@ it('builds a lazy snapshot once while holding the head lock', function (): void 
 
     assertHashMatchesStoredRow($version);
 });
+
+it('uses the configured hash format', function (): void {
+    config(['model-integrity.hash_format' => 1]);
+
+    expect($this->recorder->record($this->document, 'created', ['title' => 'A'])->hash_format)->toBe(1);
+});
+
+it('rejects an unsupported configured hash format', function (): void {
+    config(['model-integrity.hash_format' => 7]);
+
+    $this->recorder->record($this->document, 'created', ['title' => 'A']);
+})->throws(UnsupportedHashFormatException::class);
 
 it('stores string keys', function (): void {
     $record = UlidRecord::withoutEvents(fn () => UlidRecord::query()->create(['title' => 'U']));

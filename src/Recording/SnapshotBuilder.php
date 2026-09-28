@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace MuellerSchmitz\ModelIntegrity\Recording;
 
 use Closure;
+use DateTimeInterface;
 use Illuminate\Database\Eloquent\Casts\AsArrayObject;
 use Illuminate\Database\Eloquent\Casts\AsCollection;
+use Illuminate\Database\Eloquent\Casts\AsEnumArrayObject;
+use Illuminate\Database\Eloquent\Casts\AsEnumCollection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
@@ -23,6 +26,14 @@ class SnapshotBuilder
 {
     /** Casts decoded from their JSON representation instead of Laravel's cast objects. */
     private const array JSON_CASTS = ['array', 'json', 'object', 'collection'];
+
+    /** Cast classes storing JSON, including their parameterized forms (AsCollection::using(), AsEnumCollection::of()). */
+    private const array JSON_CAST_CLASSES = [
+        AsArrayObject::class,
+        AsCollection::class,
+        AsEnumArrayObject::class,
+        AsEnumCollection::class,
+    ];
 
     /**
      * Built-in casts normalized by Laravel's cast implementation. Checked before
@@ -41,13 +52,15 @@ class SnapshotBuilder
     /**
      * @param  list<string>  $except
      * @param  list<string>  $relations
+     * @param  bool  $lock  read the row with a row lock, e.g. before deleting it
      * @return array<string, mixed>
      */
-    public function build(Model $model, array $except = [], array $relations = []): array
+    public function build(Model $model, array $except = [], array $relations = [], bool $lock = false): array
     {
         $row = $model->getConnection()
             ->table($model->getTable())
             ->where($model->getKeyName(), $model->getKey())
+            ->when($lock, fn ($query) => $query->lockForUpdate())
             ->first();
 
         if ($row === null) {
@@ -95,18 +108,29 @@ class SnapshotBuilder
             return $isDate ? $this->callProtected($model, 'asDateTime', $value) : $value;
         }
 
-        $type = strtolower(explode(':', $cast, 2)[0]);
+        $castClass = explode(':', $cast, 2)[0];
+        $type = strtolower($castClass);
 
         return match (true) {
             // Keep the stored ciphertext; decrypting would put plain text into the history.
             str_contains($type, 'encrypted') => $value,
             in_array($type, self::JSON_CASTS, true),
-            in_array($cast, [AsArrayObject::class, AsCollection::class], true) => $this->decodeJson($value),
+            in_array($castClass, self::JSON_CAST_CLASSES, true) => $this->decodeJson($value),
+            // Plain dates carry no time: keep them as Y-m-d instead of shifting
+            // midnight of the app timezone to UTC.
+            in_array($type, ['date', 'immutable_date'], true) => $this->plainDate($model, $key, $value),
             in_array($type, self::BUILTIN_CASTS, true),
             enum_exists($cast) => $this->callProtected($model, 'castAttribute', $key, $value),
             // Custom cast classes and other casts (e.g. 'hashed'): keep the stored value.
             default => $value,
         };
+    }
+
+    private function plainDate(Model $model, string $key, mixed $value): string
+    {
+        $date = $this->callProtected($model, 'castAttribute', $key, $value);
+
+        return $date instanceof DateTimeInterface ? $date->format('Y-m-d') : (is_scalar($value) ? (string) $value : '');
     }
 
     private function decodeJson(mixed $value): mixed

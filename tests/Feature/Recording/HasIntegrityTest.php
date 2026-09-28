@@ -123,9 +123,15 @@ describe('deletes', function (): void {
             ->and(Document::query()->count())->toBe(1);
     });
 
-    it('records a hard delete with the state before deletion', function (): void {
+    it('records a hard delete with the state before deletion, read with a lock', function (): void {
         $invoice = newInvoice();
+        DB::enableQueryLog();
         $invoice->delete();
+
+        $rowRead = collect(DB::getQueryLog())->pluck('query')
+            ->first(fn (string $sql): bool => str_starts_with($sql, 'select') && str_contains($sql, 'invoices'));
+
+        expect($rowRead)->when(DB::connection()->getDriverName() !== 'sqlite', fn ($sql) => $sql->toContain('for update'));
 
         $deleted = Version::query()->where('event', 'deleted')->sole();
 

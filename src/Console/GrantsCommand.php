@@ -8,10 +8,13 @@ use Illuminate\Console\Command;
 use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
+use MuellerSchmitz\ModelIntegrity\Console\Concerns\ResolvesModelClasses;
 use MuellerSchmitz\ModelIntegrity\Database\GrantStatements;
 
 class GrantsCommand extends Command
 {
+    use ResolvesModelClasses;
+
     protected $signature = 'model-integrity:grants
         {--user= : Database user of the application (default: the connection user)}
         {--host=% : Host part of the MySQL/MariaDB account}
@@ -28,15 +31,31 @@ class GrantsCommand extends Command
         $versions = $prefix.Config::string('model-integrity.tables.versions');
         $heads = $prefix.Config::string('model-integrity.tables.heads');
 
+        $driver = $connection->getDriverName();
+        $user = $this->user($connection);
+        $host = $this->stringOption('host') ?? '%';
+        $allTables = $this->option('all-tables') === true;
+
+        if ($user === '' && $driver !== 'sqlite') {
+            $this->error('The connection has no database user; pass --user.');
+
+            return self::INVALID;
+        }
+
+        if ($driver === 'pgsql' && ($host !== '%' || $allTables)) {
+            $this->warn('--host and --all-tables are ignored on PostgreSQL: roles have no host and privileges are granted per table.');
+        }
+
         $lines = $grants->build(
-            $connection->getDriverName(),
-            $this->user($connection),
-            $this->stringOption('host') ?? '%',
+            $driver,
+            $user,
+            $host,
             $connection->getDatabaseName(),
             $versions,
             $heads,
-            $this->option('all-tables') === true ? $this->otherTables($connection, [$versions, $heads]) : [],
-            $this->option('all-tables') === true,
+            $allTables ? $this->otherTables($connection, [$versions, $heads]) : [],
+            $allTables,
+            $allTables ? $this->views($connection) : [],
         );
 
         foreach ($lines as $line) {
@@ -81,13 +100,22 @@ class GrantsCommand extends Command
         return $tables;
     }
 
-    private function stringOption(string $name): ?string
+    /**
+     * @return list<string>
+     */
+    private function views(Connection $connection): array
     {
-        $value = $this->option($name);
+        $database = $connection->getDatabaseName();
+        $views = [];
 
-        // Artisan::call() passes numbers as int; the command line always passes strings.
-        $value = is_int($value) ? (string) $value : $value;
+        foreach ($connection->getSchemaBuilder()->getViews() as $view) {
+            if (($view['schema'] ?? $database) === $database) {
+                $views[] = $view['name'];
+            }
+        }
 
-        return is_string($value) && $value !== '' ? $value : null;
+        sort($views);
+
+        return $views;
     }
 }

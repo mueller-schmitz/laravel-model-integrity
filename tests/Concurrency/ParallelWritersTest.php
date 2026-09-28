@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use MuellerSchmitz\ModelIntegrity\Models\Version;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Post;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityChecker;
@@ -42,9 +43,10 @@ function runWorkers(string $mode, int|string $sharedId, string $label, int $expe
     $processes->each(fn (Process $process) => $process->wait());
 
     $elapsed = microtime(true) - $started;
+    $versions = $expectedVersions > 0 ? $expectedVersions : (int) DB::table('integrity_versions')->count();
     fwrite(STDERR, sprintf(
         "\n%s: %d versions by %d parallel writers in %.2f s (%.0f versions/s) on %s\n",
-        $label, $expectedVersions, WORKERS, $elapsed, $expectedVersions / $elapsed, DB::connection()->getDriverName(),
+        $label, $versions, WORKERS, $elapsed, $versions / max($elapsed, 0.001), DB::connection()->getDriverName(),
     ));
 
     return $processes
@@ -83,6 +85,31 @@ it('keeps both chains gapless and valid under parallel model writes', function (
 
     expect($shared->integrityVersions()->pluck('version')->map(fn ($v): int => (int) $v)->all())
         ->toBe(range(1, 1 + WORKERS * WRITES_PER_WORKER));
+});
+
+it('records the final state in deleted versions under parallel updates', function (): void {
+    $shared = collect(range(1, WORKERS))->map(fn (int $i) => Invoice::query()->create(['number' => "S{$i}", 'total' => '0.00']));
+
+    expect(runWorkers('deletes', $shared->pluck('id')->implode(','), 'deletes', 0))->toBe([]);
+
+    $max = (int) DB::table('integrity_versions')->max('sequence');
+    expectIntactChains($max);
+
+    // A deletion changes no data, so the deleted version's snapshot must equal
+    // the snapshot of the version recorded right before it.
+    $deleted = Version::query()->where('event', 'deleted')->get();
+
+    expect($deleted)->toHaveCount(WORKERS);
+
+    foreach ($deleted as $version) {
+        $before = Version::query()
+            ->where('versionable_type', $version->versionable_type)
+            ->where('versionable_id', $version->versionable_id)
+            ->where('version', $version->version - 1)
+            ->sole();
+
+        expect($version->snapshot)->toBe($before->snapshot);
+    }
 });
 
 it('keeps the chain of a model intact under parallel relation records', function (): void {

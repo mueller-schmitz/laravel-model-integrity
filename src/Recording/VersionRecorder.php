@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Config;
 use MuellerSchmitz\ModelIntegrity\Events\VersionRecorded;
 use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
+use MuellerSchmitz\ModelIntegrity\Exceptions\UnsupportedHashFormatException;
 use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
@@ -21,13 +22,12 @@ use MuellerSchmitz\ModelIntegrity\Models\Version;
  *
  * The global head row is locked for the duration of the transaction. This
  * serializes all recording writes, which keeps the global sequence gapless.
+ * The model's head row is locked afterwards; it provides the next version
+ * number and prev_hash. Locking reads always see the latest committed state,
+ * so the versions table itself needs no lock (and no UPDATE privilege).
  */
 class VersionRecorder
 {
-    private const string GLOBAL_CHAIN = 'global';
-
-    private const int HASH_FORMAT = 1;
-
     public function __construct(
         private readonly DatabaseManager $database,
         private readonly Hasher $hasher,
@@ -54,28 +54,25 @@ class VersionRecorder
         ?array $context = null,
     ): Version {
         $connection = $this->connectionFor($model);
+        $format = $this->hashFormat();
 
-        return $connection->transaction(function () use ($connection, $model, $event, $snapshot, $schemaVersion, $reason, $context): Version {
-            $head = $connection->table($this->table('heads'))
-                ->where('chain', self::GLOBAL_CHAIN)
-                ->lockForUpdate()
-                ->first();
+        return $connection->transaction(function () use ($connection, $format, $model, $event, $snapshot, $schemaVersion, $reason, $context): Version {
+            $head = $this->lockHead($connection, ChainName::GLOBAL);
 
             if ($head === null) {
-                throw IntegrityConfigurationException::headMissing(self::GLOBAL_CHAIN);
+                throw IntegrityConfigurationException::headMissing(ChainName::GLOBAL);
             }
 
             $type = $model->getMorphClass();
             $id = $this->modelKey($model);
+            $chain = ChainName::for($type, $id);
 
-            // A locking read returns the latest committed version regardless of
-            // the transaction's snapshot; the head lock is held anyway.
-            $previous = $connection->table($this->table('versions'))
-                ->where('versionable_type', $type)
-                ->where('versionable_id', $id)
-                ->orderByDesc('version')
-                ->lockForUpdate()
-                ->first(['version', 'hash']);
+            $modelHead = $this->lockHead($connection, $chain);
+
+            if ($modelHead === null) {
+                $connection->table($this->table('heads'))->insert(['chain' => $chain, 'sequence' => 0, 'hash' => null]);
+                $modelHead = (object) ['sequence' => 0, 'hash' => null];
+            }
 
             $snapshot = $snapshot instanceof Closure ? $snapshot() : $snapshot;
 
@@ -83,16 +80,16 @@ class VersionRecorder
             $createdAt = CarbonImmutable::now('UTC');
 
             $envelope = [
-                'format' => self::HASH_FORMAT,
+                'format' => $format,
                 'sequence' => $this->intValue($head->sequence) + 1,
                 'versionable_type' => $type,
                 'versionable_id' => $id,
-                'version' => $previous === null ? 1 : $this->intValue($previous->version) + 1,
+                'version' => $this->intValue($modelHead->sequence) + 1,
                 'event' => $event,
                 'schema_version' => $schemaVersion,
                 'snapshot' => $snapshot,
-                'prev_hash' => $previous?->hash,
-                'global_prev_hash' => $head->hash,
+                'prev_hash' => is_string($modelHead->hash) ? $modelHead->hash : null,
+                'global_prev_hash' => is_string($head->hash) ? $head->hash : null,
                 'actor_type' => $actor['type'],
                 'actor_id' => $actor['id'],
                 'reason' => $reason,
@@ -108,7 +105,7 @@ class VersionRecorder
                 'versionable_id' => $id,
                 'version' => $envelope['version'],
                 'event' => $event,
-                'hash_format' => self::HASH_FORMAT,
+                'hash_format' => $format,
                 'schema_version' => $schemaVersion,
                 'snapshot' => $this->serializer->encode($snapshot),
                 'prev_hash' => $envelope['prev_hash'],
@@ -123,13 +120,8 @@ class VersionRecorder
 
             $row['id'] = $connection->table($this->table('versions'))->insertGetId($row);
 
-            $connection->table($this->table('heads'))
-                ->where('chain', self::GLOBAL_CHAIN)
-                ->update([
-                    'sequence' => $envelope['sequence'],
-                    'hash' => $hash,
-                    'updated_at' => $row['created_at'],
-                ]);
+            $this->advanceHead($connection, ChainName::GLOBAL, $envelope['sequence'], $hash, $row['created_at']);
+            $this->advanceHead($connection, $chain, $envelope['version'], $hash, $row['created_at']);
 
             $version = (new Version)->newFromBuilder($row);
 
@@ -157,6 +149,41 @@ class VersionRecorder
         }
 
         return $connection;
+    }
+
+    /**
+     * @return object{sequence: mixed, hash: mixed}|null
+     */
+    private function lockHead(Connection $connection, string $chain): ?object
+    {
+        /** @var object{sequence: mixed, hash: mixed}|null */
+        return $connection->table($this->table('heads'))
+            ->where('chain', $chain)
+            ->lockForUpdate()
+            ->first(['sequence', 'hash']);
+    }
+
+    private function advanceHead(Connection $connection, string $chain, int $sequence, string $hash, string $updatedAt): void
+    {
+        $connection->table($this->table('heads'))
+            ->where('chain', $chain)
+            ->update(['sequence' => $sequence, 'hash' => $hash, 'updated_at' => $updatedAt]);
+    }
+
+    /**
+     * The configured hash format, validated against the formats the Hasher knows.
+     */
+    private function hashFormat(): int
+    {
+        $format = config('model-integrity.hash_format', 1);
+
+        if (! is_int($format)) {
+            throw UnsupportedHashFormatException::for($format);
+        }
+
+        Hasher::fields($format);
+
+        return $format;
     }
 
     private function table(string $name): string

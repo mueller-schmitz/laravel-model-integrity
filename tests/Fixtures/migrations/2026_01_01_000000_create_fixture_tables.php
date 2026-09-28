@@ -62,6 +62,21 @@ return new class extends Migration
             $table->primary(['post_id', 'tag_id']);
         });
 
+        Schema::create('cast_samples', function (Blueprint $table): void {
+            $table->id();
+            $table->dateTime('happened_at')->nullable();
+            $table->unsignedInteger('stamp')->nullable();
+            $table->dateTime('frozen_at')->nullable();
+            $table->date('born_on')->nullable();
+            $table->json('payload')->nullable();
+            $table->json('items')->nullable();
+            $table->json('tags')->nullable();
+            $table->json('statuses')->nullable();
+            $table->string('label')->nullable();
+            $table->integer('amount')->nullable();
+            $table->string('password')->nullable();
+        });
+
         Schema::create('ulid_records', function (Blueprint $table): void {
             $table->ulid('id')->primary();
             $table->string('title');

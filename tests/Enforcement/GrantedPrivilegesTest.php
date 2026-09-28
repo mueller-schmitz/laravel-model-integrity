@@ -7,6 +7,10 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use MuellerSchmitz\ModelIntegrity\Database\AppendOnlyTriggers;
+use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
+use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Post;
+use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Tag;
+use MuellerSchmitz\ModelIntegrity\Verification\IntegrityChecker;
 
 /*
  * Applies the output of model-integrity:grants to a fresh database user and
@@ -62,6 +66,17 @@ beforeEach(function (): void {
         ->filter(fn (string $line): bool => $line !== '' && ! str_starts_with($line, '--'))
         ->each(fn (string $statement) => $this->admin->unprepared($statement));
 
+    // The application's own tables, as any application user has them.
+    foreach (['invoices', 'posts', 'tags', 'post_tag'] as $table) {
+        $this->admin->unprepared($this->admin->getDriverName() === 'pgsql'
+            ? "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE \"{$table}\" TO \"".RESTRICTED_USER.'"'
+            : "GRANT SELECT, INSERT, UPDATE, DELETE ON `{$this->admin->getDatabaseName()}`.`{$table}` TO '".RESTRICTED_USER."'@'%'");
+
+        if ($this->admin->getDriverName() === 'pgsql' && $table !== 'post_tag') {
+            $this->admin->unprepared("GRANT USAGE ON SEQUENCE \"{$table}_id_seq\" TO \"".RESTRICTED_USER.'"');
+        }
+    }
+
     $this->restricted = connectionAs('mi_restricted', ['username' => RESTRICTED_USER, 'password' => RESTRICTED_PASSWORD]);
 });
 
@@ -90,6 +105,27 @@ function versionRow(int $sequence): array
         'created_at' => '2026-09-28 10:00:00.000000',
     ];
 }
+
+it('lets the application record, delete and verify through the package API', function (): void {
+    // Models and integrity tables on the restricted connection, like a real application.
+    config(['model-integrity.connection' => 'mi_restricted']);
+
+    $invoice = Invoice::on('mi_restricted')->create(['number' => 'RE-1', 'total' => '1.00']);
+    $invoice->update(['total' => '2.00']);
+
+    $post = Post::on('mi_restricted')->create(['title' => 'Hello']);
+    $tag = Tag::on('mi_restricted')->create(['name' => 'a']);
+    $this->restricted->transaction(function () use ($post, $tag): void {
+        $post->tags()->attach($tag);
+        $post->recordRelation('tags');
+    });
+
+    $invoice->delete();
+
+    expect($this->restricted->table('integrity_versions')->count())->toBe(5)
+        ->and($this->restricted->table('integrity_heads')->count())->toBe(3)
+        ->and(app(IntegrityChecker::class)->checkAll()->errors()->map(fn ($e) => (string) $e)->all())->toBe([]);
+});
 
 it('allows reading and appending versions', function (): void {
     $this->restricted->table('integrity_versions')->insert(versionRow(1));

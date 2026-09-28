@@ -19,17 +19,23 @@ final readonly class ModelOptions
     private function __construct(
         public array $except,
         public array $relations,
+        public int $schemaVersion,
     ) {}
 
     public static function of(Model $model): self
     {
-        if (! method_exists($model, 'getIntegrityExcept') || ! method_exists($model, 'getIntegrityRelations')) {
+        if (! method_exists($model, 'getIntegrityExcept')
+            || ! method_exists($model, 'getIntegrityRelations')
+            || ! method_exists($model, 'getIntegritySchemaVersion')) {
             throw IntegrityConfigurationException::notTracked($model::class);
         }
+
+        $schemaVersion = $model->getIntegritySchemaVersion();
 
         return new self(
             self::strings($model->getIntegrityExcept()),
             self::strings($model->getIntegrityRelations()),
+            is_int($schemaVersion) ? $schemaVersion : 1,
         );
     }
 
