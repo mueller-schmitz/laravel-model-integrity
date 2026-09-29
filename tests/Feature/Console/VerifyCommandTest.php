@@ -25,6 +25,13 @@ it('passes when everything is intact', function (): void {
         ->assertExitCode(0);
 });
 
+it('shows the progress with -v', function (): void {
+    $this->artisan('model-integrity:verify', ['-v' => true])
+        ->expectsOutputToContain('Checking the global chain')
+        ->expectsOutputToContain('Checking '.Invoice::class)
+        ->assertExitCode(0);
+});
+
 it('fails with a list of violations', function (): void {
     DB::table('integrity_versions')->where('sequence', 3)->update(['snapshot' => '{"title":"X"}']);
 

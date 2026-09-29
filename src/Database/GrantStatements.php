@@ -28,20 +28,23 @@ class GrantStatements
         array $otherTables = [],
         bool $allTables = false,
         array $views = [],
+        ?string $filesTable = null,
     ): array {
         if ($user === '' && $driver !== 'sqlite') {
             throw new InvalidArgumentException('The database user must not be empty.');
         }
 
-        return match ($driver) {
-            'mysql', 'mariadb' => $this->mysql($user, $host, $database, $versionsTable, $headsTable, $otherTables, $views, $allTables),
-            'pgsql' => $this->pgsql($user, $versionsTable, $headsTable),
+        $preamble = ['-- Run php artisan migrate first: the statements refer to all integrity tables.'];
+
+        return [...$preamble, ...match ($driver) {
+            'mysql', 'mariadb' => $this->mysql($user, $host, $database, $versionsTable, $headsTable, $otherTables, $views, $allTables, $filesTable),
+            'pgsql' => $this->pgsql($user, $versionsTable, $headsTable, $filesTable),
             'sqlite' => [
                 '-- SQLite has no users or privileges.',
                 '-- Protect the database file with file system permissions instead.',
             ],
             default => throw new InvalidArgumentException("Privileges for driver [{$driver}] are not supported."),
-        };
+        }];
     }
 
     /**
@@ -49,7 +52,7 @@ class GrantStatements
      * @param  list<string>  $views
      * @return list<string>
      */
-    private function mysql(string $user, string $host, string $database, string $versions, string $heads, array $otherTables, array $views, bool $allTables): array
+    private function mysql(string $user, string $host, string $database, string $versions, string $heads, array $otherTables, array $views, bool $allTables, ?string $files): array
     {
         $grantee = $this->mysqlString($user).'@'.$this->mysqlString($host);
         $table = fn (string $name): string => $this->mysqlIdentifier($database).'.'.$this->mysqlIdentifier($name);
@@ -81,17 +84,21 @@ class GrantStatements
         $lines[] = "GRANT SELECT, INSERT ON {$table($versions)} TO {$grantee};";
         $lines[] = "GRANT SELECT, INSERT, UPDATE ON {$table($heads)} TO {$grantee};";
 
+        if ($files !== null) {
+            $lines[] = "GRANT SELECT, INSERT ON {$table($files)} TO {$grantee};";
+        }
+
         return $lines;
     }
 
     /**
      * @return list<string>
      */
-    private function pgsql(string $user, string $versions, string $heads): array
+    private function pgsql(string $user, string $versions, string $heads, ?string $files): array
     {
         $role = $this->pgsqlIdentifier($user);
 
-        return [
+        $lines = [
             '-- The user must not own these tables: owners can change or drop them regardless of privileges.',
             '-- Run migrations with a separate owner role.',
             '-- Tables outside the public schema also need: GRANT USAGE ON SCHEMA <schema> TO '.$role.';',
@@ -101,6 +108,14 @@ class GrantStatements
             "REVOKE ALL ON TABLE {$this->pgsqlIdentifier($heads)} FROM {$role};",
             "GRANT SELECT, INSERT, UPDATE ON TABLE {$this->pgsqlIdentifier($heads)} TO {$role};",
         ];
+
+        if ($files !== null) {
+            $lines[] = "REVOKE ALL ON TABLE {$this->pgsqlIdentifier($files)} FROM {$role};";
+            $lines[] = "GRANT SELECT, INSERT ON TABLE {$this->pgsqlIdentifier($files)} TO {$role};";
+            $lines[] = "GRANT USAGE ON SEQUENCE {$this->pgsqlIdentifier($files.'_id_seq')} TO {$role};";
+        }
+
+        return $lines;
     }
 
     private function mysqlIdentifier(string $name): string

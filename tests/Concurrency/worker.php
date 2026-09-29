@@ -16,6 +16,7 @@ declare(strict_types=1);
  */
 
 use Illuminate\Support\Facades\DB;
+use MuellerSchmitz\ModelIntegrity\Facades\IntegrityFiles;
 use MuellerSchmitz\ModelIntegrity\ModelIntegrityServiceProvider;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Post;
@@ -33,6 +34,8 @@ $app = Application::create(options: [
 
 $app['config']->set('database.default', getenv('DB_CONNECTION') ?: 'sqlite');
 $app['config']->set('app.key', 'base64:'.base64_encode(str_repeat('k', 32)));
+$app['config']->set('filesystems.disks.integrity', ['driver' => 'local', 'root' => getenv('MI_FILES_ROOT') ?: sys_get_temp_dir().'/mi-files']);
+$app['config']->set('model-integrity.files.disk', 'integrity');
 
 try {
     if ($mode === 'models') {
@@ -43,6 +46,24 @@ try {
 
             // All workers change the same model and compete for its next version.
             Invoice::query()->findOrFail((int) $sharedId)->update(['note' => "worker {$worker} write {$i}"]);
+        }
+    } elseif ($mode === 'store-one') {
+        // Stores the content given as the last argument once.
+        $stream = fopen('php://memory', 'r+');
+        fwrite($stream, (string) $sharedId);
+        rewind($stream);
+        IntegrityFiles::store($stream);
+        fclose($stream);
+    } elseif ($mode === 'files') {
+        // Every worker stores the same shared content and its own content.
+        for ($i = 1; $i <= (int) $writes; $i++) {
+            foreach (['shared content', "worker {$worker} write {$i}"] as $contents) {
+                $stream = fopen('php://memory', 'r+');
+                fwrite($stream, $contents);
+                rewind($stream);
+                IntegrityFiles::store($stream);
+                fclose($stream);
+            }
         }
     } elseif ($mode === 'deletes') {
         // $sharedId holds comma-separated ids; every worker updates all of them

@@ -8,6 +8,20 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- Files in the chain: `IntegrityFiles::store()` stores files content-addressed under their SHA-256 hash on a configurable disk, once per content, written atomically outside the chain lock; a file with other content found under the final name is kept as evidence and replaced; every stored file (`StoredFile`, morph alias `model-integrity.file`) is a version in the global chain
+- `AsIntegrityFile` cast: a column holding the file hash, so the file is part of the model's snapshot
+- Error type `FileMismatch`; `checkModel()` checks referenced files for presence and size, `checkFiles()` and `verify --files` hash their content
+- Append-only triggers and privileges for `integrity_files`; `model-integrity:triggers` covers both tables
+- `model-integrity.actor.guards` to ask several auth guards for the actor
+- `verify -v` prints each step; `checkAll()` accepts a progress callback
+
+### Changed
+
+- `model-integrity:install` publishes only migrations that are not published yet, dated after the existing ones, so upgrading does not duplicate migrations
+- The trigger message is now "Integrity records are append-only." for both tables
+
 ## [0.1.1] - 2026-09-28
 
 ### Fixed

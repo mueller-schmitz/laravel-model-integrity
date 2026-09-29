@@ -29,5 +29,5 @@ it('rejects table names whose trigger names would exceed the identifier limit', 
 it('does not put the table name into the error message', function (): void {
     $statements = implode("\n", app(AppendOnlyTriggers::class)->installStatements(DB::connection(), 'integrity_versions'));
 
-    expect($statements)->toContain("'Recorded versions are append-only.'");
+    expect($statements)->toContain("'Integrity records are append-only.'");
 });

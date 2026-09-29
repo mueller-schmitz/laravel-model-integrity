@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Post;
@@ -25,14 +26,15 @@ beforeEach(function (): void {
  *
  * @return list<string>
  */
-function runWorkers(string $mode, int|string $sharedId, string $label, int $expectedVersions): array
+function runWorkers(string $mode, int|string $sharedId, string $label, int $expectedVersions, array $env = []): array
 {
     $started = microtime(true);
 
     /** @var Collection<int, Process> $processes */
-    $processes = collect(range(1, WORKERS))->map(function (int $worker) use ($mode, $sharedId): Process {
+    $processes = collect(range(1, WORKERS))->map(function (int $worker) use ($mode, $sharedId, $env): Process {
         $process = new Process(
             [PHP_BINARY, __DIR__.'/worker.php', $mode, (string) $worker, (string) WRITES_PER_WORKER, (string) $sharedId],
+            env: $env,
             timeout: 300,
         );
         $process->start();
@@ -109,6 +111,26 @@ it('records the final state in deleted versions under parallel updates', functio
             ->sole();
 
         expect($version->snapshot)->toBe($before->snapshot);
+    }
+});
+
+it('stores identical files once under parallel writers', function (): void {
+    $root = sys_get_temp_dir().'/mi-files-'.uniqid();
+    config(['filesystems.disks.integrity' => ['driver' => 'local', 'root' => $root], 'model-integrity.files.disk' => 'integrity']);
+
+    try {
+        // Per worker and write one unique file, plus one file shared by all.
+        $expected = 1 + WORKERS * WRITES_PER_WORKER;
+
+        expect(runWorkers('files', 0, 'files', $expected, ['MI_FILES_ROOT' => $root]))->toBe([])
+            ->and(DB::table('integrity_files')->count())->toBe($expected)
+            ->and(DB::table('integrity_files')->where('sha256', hash('sha256', 'shared content'))->count())->toBe(1);
+
+        expectIntactChains($expected);
+
+        expect(app(IntegrityChecker::class)->checkFiles()->passes())->toBeTrue();
+    } finally {
+        File::deleteDirectory($root);
     }
 });
 

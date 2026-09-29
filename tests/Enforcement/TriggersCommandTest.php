@@ -35,6 +35,18 @@ it('removes and installs the triggers', function (): void {
         ->toThrow(QueryException::class, 'append-only');
 });
 
+it('covers the stored files table as well', function (): void {
+    $this->artisan('model-integrity:triggers', ['--remove' => true])->assertExitCode(0);
+    DB::table('integrity_files')->insert(['sha256' => str_repeat('a', 64), 'disk' => 'local', 'path' => 'x', 'size' => 1, 'created_at' => '2026-09-29 10:00:00']);
+    DB::table('integrity_files')->update(['size' => 2]);
+
+    $this->artisan('model-integrity:triggers')
+        ->expectsOutputToContain('integrity_files')
+        ->assertExitCode(0);
+
+    expect(fn () => DB::table('integrity_files')->update(['size' => 3]))->toThrow(QueryException::class, 'append-only');
+});
+
 it('installs the triggers twice without failing', function (): void {
     $this->artisan('model-integrity:triggers')->assertExitCode(0);
     $this->artisan('model-integrity:triggers')->assertExitCode(0);

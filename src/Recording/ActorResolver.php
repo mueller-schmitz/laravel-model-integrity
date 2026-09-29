@@ -57,7 +57,26 @@ class ActorResolver
      */
     public function resolve(): array
     {
-        return $this->describe($this->actor ?? $this->auth->guard()->user());
+        return $this->describe($this->actor ?? $this->authenticatedUser());
+    }
+
+    /**
+     * The user of the first configured guard that has one; without a
+     * configuration only the default guard is asked.
+     */
+    private function authenticatedUser(): mixed
+    {
+        $guards = config('model-integrity.actor.guards');
+
+        foreach (is_array($guards) && $guards !== [] ? $guards : [null] as $guard) {
+            $user = $this->auth->guard(is_string($guard) ? $guard : null)->user();
+
+            if ($user !== null) {
+                return $user;
+            }
+        }
+
+        return null;
     }
 
     /**
