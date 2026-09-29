@@ -13,6 +13,7 @@ use MuellerSchmitz\ModelIntegrity\Console\InstallCommand;
 use MuellerSchmitz\ModelIntegrity\Console\SnapshotCommand;
 use MuellerSchmitz\ModelIntegrity\Console\TriggersCommand;
 use MuellerSchmitz\ModelIntegrity\Console\VerifyCommand;
+use MuellerSchmitz\ModelIntegrity\Files\FileStore;
 use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
 use MuellerSchmitz\ModelIntegrity\Recording\ActorResolver;
@@ -30,6 +31,7 @@ class ModelIntegrityServiceProvider extends ServiceProvider
         $this->app->singleton(SnapshotBuilder::class);
         $this->app->scoped(ActorResolver::class);
         $this->app->singleton(IntegrityChecker::class);
+        $this->app->singleton(FileStore::class);
     }
 
     public function boot(): void

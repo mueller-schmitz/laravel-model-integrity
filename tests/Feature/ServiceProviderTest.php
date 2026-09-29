@@ -19,7 +19,9 @@ it('merges the package config', function (): void {
     expect(config('model-integrity.tables'))->toBe([
         'versions' => 'integrity_versions',
         'heads' => 'integrity_heads',
+        'files' => 'integrity_files',
     ])
+        ->and(config('model-integrity.files'))->toBe(['disk' => 'local', 'path' => 'integrity-files'])
         ->and(config('model-integrity.defaults'))->toBe([
             'mode' => 'versioned',
             'deletes' => 'forbid',
@@ -52,5 +54,7 @@ it('publishes the migrations under its tag in dependency order', function (): vo
             'create_integrity_versions_table.php',
             'create_integrity_heads_table.php',
             'create_integrity_append_only_triggers.php',
+            'create_integrity_files_table.php',
+            'create_integrity_files_append_only_triggers.php',
         ]);
 });

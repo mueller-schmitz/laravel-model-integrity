@@ -26,6 +26,23 @@ return [
     'tables' => [
         'versions' => 'integrity_versions',
         'heads' => 'integrity_heads',
+        'files' => 'integrity_files',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Stored files
+    |--------------------------------------------------------------------------
+    |
+    | Files are stored content-addressed under {path}/{aa}/{bb}/{sha256} and
+    | never overwritten or deleted. Use a private disk and restrict write
+    | access to it: changes on the disk are detected, not prevented.
+    |
+    */
+
+    'files' => [
+        'disk' => env('MODEL_INTEGRITY_FILES_DISK', 'local'),
+        'path' => 'integrity-files',
     ],
 
     /*

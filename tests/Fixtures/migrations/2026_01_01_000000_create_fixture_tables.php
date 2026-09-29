@@ -41,6 +41,7 @@ return new class extends Migration
         Schema::create('contracts', function (Blueprint $table): void {
             $table->id();
             $table->string('title');
+            $table->char('document', 64)->nullable();
             $table->timestamps();
             $table->softDeletes();
         });

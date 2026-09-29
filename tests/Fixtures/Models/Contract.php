@@ -6,6 +6,7 @@ namespace MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use MuellerSchmitz\ModelIntegrity\Casts\AsIntegrityFile;
 use MuellerSchmitz\ModelIntegrity\Concerns\HasIntegrity;
 
 class Contract extends Model
@@ -16,4 +17,11 @@ class Contract extends Model
     protected string $integrityDeletes = 'record';
 
     protected $guarded = [];
+
+    protected function casts(): array
+    {
+        return [
+            'document' => AsIntegrityFile::class,
+        ];
+    }
 }
