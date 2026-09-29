@@ -47,6 +47,14 @@ it('covers the stored files table as well', function (): void {
     expect(fn () => DB::table('integrity_files')->update(['size' => 3]))->toThrow(QueryException::class, 'append-only');
 });
 
+it('fails when no integrity table exists yet', function (): void {
+    config(['model-integrity.tables.versions' => 'missing_versions', 'model-integrity.tables.files' => 'missing_files']);
+
+    $this->artisan('model-integrity:triggers')
+        ->expectsOutputToContain('migrate')
+        ->assertExitCode(1);
+});
+
 it('installs the triggers twice without failing', function (): void {
     $this->artisan('model-integrity:triggers')->assertExitCode(0);
     $this->artisan('model-integrity:triggers')->assertExitCode(0);
