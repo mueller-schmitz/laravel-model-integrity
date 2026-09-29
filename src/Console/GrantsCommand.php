@@ -30,9 +30,9 @@ class GrantsCommand extends Command
         $prefix = $connection->getTablePrefix();
         $versions = $prefix.Config::string('model-integrity.tables.versions');
         $heads = $prefix.Config::string('model-integrity.tables.heads');
-        $filesName = Config::string('model-integrity.tables.files', 'integrity_files');
-        // Only once migrated: a GRANT on a missing table fails on MySQL.
-        $files = $connection->getSchemaBuilder()->hasTable($filesName) ? $prefix.$filesName : null;
+        // Printed without connecting to the database; a GRANT on a table that
+        // is not migrated yet fails on MySQL, so the output says to migrate first.
+        $files = $prefix.Config::string('model-integrity.tables.files', 'integrity_files');
 
         $driver = $connection->getDriverName();
         $user = $this->user($connection);

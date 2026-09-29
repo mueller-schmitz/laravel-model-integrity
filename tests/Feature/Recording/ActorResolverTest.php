@@ -25,6 +25,30 @@ it('resolves the authenticated user', function (): void {
     expect($this->resolver->resolve())->toBe(['type' => $user->getMorphClass(), 'id' => (string) $user->getKey()]);
 });
 
+it('checks the configured guards in order', function (): void {
+    config([
+        'auth.guards.admin' => ['driver' => 'session', 'provider' => 'users'],
+        'auth.providers.users.model' => User::class,
+        'model-integrity.actor.guards' => ['web', 'admin'],
+    ]);
+    $admin = User::query()->create(['name' => 'Admin']);
+
+    Auth::guard('admin')->login($admin);
+
+    expect(app(ActorResolver::class)->resolve())->toBe(['type' => $admin->getMorphClass(), 'id' => (string) $admin->getKey()]);
+});
+
+it('ignores guards that are not configured for the actor', function (): void {
+    config([
+        'auth.guards.admin' => ['driver' => 'session', 'provider' => 'users'],
+        'auth.providers.users.model' => User::class,
+    ]);
+
+    Auth::guard('admin')->login(User::query()->create(['name' => 'Admin']));
+
+    expect(app(ActorResolver::class)->resolve())->toBe(['type' => null, 'id' => null]);
+});
+
 it('prefers an explicit actor over the authenticated user', function (): void {
     Auth::login(User::query()->create(['name' => 'Anna']));
     $system = User::query()->create(['name' => 'Importer']);

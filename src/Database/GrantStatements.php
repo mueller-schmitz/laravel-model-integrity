@@ -34,7 +34,9 @@ class GrantStatements
             throw new InvalidArgumentException('The database user must not be empty.');
         }
 
-        return match ($driver) {
+        $preamble = ['-- Run php artisan migrate first: the statements refer to all integrity tables.'];
+
+        return [...$preamble, ...match ($driver) {
             'mysql', 'mariadb' => $this->mysql($user, $host, $database, $versionsTable, $headsTable, $otherTables, $views, $allTables, $filesTable),
             'pgsql' => $this->pgsql($user, $versionsTable, $headsTable, $filesTable),
             'sqlite' => [
@@ -42,7 +44,7 @@ class GrantStatements
                 '-- Protect the database file with file system permissions instead.',
             ],
             default => throw new InvalidArgumentException("Privileges for driver [{$driver}] are not supported."),
-        };
+        }];
     }
 
     /**

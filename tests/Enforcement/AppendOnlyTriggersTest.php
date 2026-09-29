@@ -32,16 +32,19 @@ it('rejects truncating versions on PostgreSQL', function (): void {
 })->throws(QueryException::class, 'append-only')
     ->skip(fn () => DB::connection()->getDriverName() !== 'pgsql', 'TRUNCATE fires triggers only on PostgreSQL; elsewhere it is prevented by privileges');
 
-it('rejects updates and deletes of stored file records', function (): void {
+// One statement per test: after an error PostgreSQL rejects every further
+// statement of the (test) transaction.
+it('rejects updates and deletes of stored file records', function (string $operation): void {
     Storage::fake('integrity');
     config(['model-integrity.files.disk' => 'integrity']);
     $path = tempnam(sys_get_temp_dir(), 'mi');
     file_put_contents($path, 'protected');
     IntegrityFiles::store($path);
 
-    expect(fn () => DB::table('integrity_files')->update(['size' => 1]))->toThrow(QueryException::class, 'append-only')
-        ->and(fn () => DB::table('integrity_files')->delete())->toThrow(QueryException::class, 'append-only');
-});
+    $operation === 'update'
+        ? DB::table('integrity_files')->update(['size' => 1])
+        : DB::table('integrity_files')->delete();
+})->with(['update', 'delete'])->throws(QueryException::class, 'append-only');
 
 it('keeps recording and verification working', function (): void {
     $this->invoice->update(['total' => '3.00']);

@@ -59,7 +59,9 @@ class VerifyCommand extends Command
                 $result = $checker->checkType($class, $failFast);
             }
         } else {
-            $result = $checker->checkAll($failFast);
+            // With -v the steps are printed, e.g. to follow long runs in a log.
+            $progress = $this->output->isVerbose() ? fn (string $step) => $this->line($step.' …') : null;
+            $result = $checker->checkAll($failFast, $progress);
         }
 
         if ($this->option('files') === true && ! ($failFast && $result->fails())) {

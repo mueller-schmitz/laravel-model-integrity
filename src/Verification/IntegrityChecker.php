@@ -137,10 +137,12 @@ class IntegrityChecker
      * use checkType() for them.
      *
      * @param  bool  $stopOnFirstFailure  stop after a broken chain or the first model with violations
+     * @param  (Closure(string): void)|null  $progress  called with a description before each step
      */
-    public function checkAll(bool $stopOnFirstFailure = false): IntegrityResult
+    public function checkAll(bool $stopOnFirstFailure = false, ?Closure $progress = null): IntegrityResult
     {
-        $result = $this->consistently(function () use ($stopOnFirstFailure): IntegrityResult {
+        $result = $this->consistently(function () use ($stopOnFirstFailure, $progress): IntegrityResult {
+            $progress?->__invoke('Checking the global chain');
             $chain = $this->inspectChain();
 
             if ($stopOnFirstFailure && $chain->fails()) {
@@ -150,6 +152,7 @@ class IntegrityChecker
             $results = [$chain];
 
             foreach ($this->recordedTypes() as $type) {
+                $progress?->__invoke('Checking '.(Relation::getMorphedModel($type) ?? $type));
                 $results[] = $this->inspectRecordedType($type, $stopOnFirstFailure);
 
                 if ($stopOnFirstFailure && end($results)->fails()) {
