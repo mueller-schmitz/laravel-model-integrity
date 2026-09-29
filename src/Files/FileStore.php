@@ -23,6 +23,7 @@ use MuellerSchmitz\ModelIntegrity\Verification\IntegrityErrorType;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityResult;
 use RuntimeException;
 use SplFileInfo;
+use Throwable;
 
 /**
  * Stores files content-addressed under their SHA-256 hash. Identical content
@@ -53,9 +54,18 @@ class FileStore
             $diskName = Config::string('model-integrity.files.disk', 'local');
             $target = $this->targetPath($sha256);
 
-            $this->ensureOnDisk(Storage::disk($diskName), $diskName, $target, $path, $sha256);
+            // A committed record means its file was in place: if it is missing
+            // now, it was lost or deleted outside the application.
+            $recorded = $this->find($sha256) !== null;
+            $wasMissing = $this->ensureOnDisk(Storage::disk($diskName), $diskName, $target, $path, $sha256);
 
-            return $this->record($sha256, $diskName, $target, $size, $mime ?? $this->detectMime($path));
+            $file = $this->record($sha256, $diskName, $target, $size, $mime ?? $this->detectMime($path));
+
+            if ($recorded && $wasMissing) {
+                $this->reportFileProblem("File [{$target}] on disk [{$diskName}] was missing and has been restored.");
+            }
+
+            return $file;
         } finally {
             if ($temporary) {
                 @unlink($path);
@@ -72,17 +82,26 @@ class FileStore
      * Makes sure the target holds exactly this content. A missing file is
      * written (also for an existing record: it heals a lost file); a file with
      * other content is kept as evidence under another name and replaced.
+     *
+     * @return bool whether the target was missing
      */
-    private function ensureOnDisk(Filesystem $disk, string $diskName, string $target, string $path, string $sha256): void
+    private function ensureOnDisk(Filesystem $disk, string $diskName, string $target, string $path, string $sha256): bool
     {
-        if ($disk->exists($target)) {
-            if ($this->hashOnDisk($disk, $target) === $sha256) {
-                return;
+        $wasMissing = ! $disk->exists($target);
+
+        if (! $wasMissing) {
+            if ($this->hashOnDisk($disk, $diskName, $target) === $sha256) {
+                return false;
             }
 
             $evidence = $target.'.corrupt-'.Carbon::now('UTC')->format('YmdHis').'-'.Str::random(6);
-            $disk->move($target, $evidence);
-            $this->reportCorruptFile($sha256, $diskName, $target, $evidence);
+
+            // Never replace the file unless it is kept as evidence.
+            if (! $disk->move($target, $evidence)) {
+                throw new RuntimeException("File [{$target}] on disk [{$diskName}] does not match its hash, and it could not be moved away as evidence.");
+            }
+
+            $this->reportFileProblem("File [{$target}] on disk [{$diskName}] did not match its hash [{$sha256}]; it was kept as [{$evidence}] and replaced.");
         }
 
         $temporary = $target.'.tmp-'.Str::random(16);
@@ -96,6 +115,10 @@ class FileStore
             if (! $disk->writeStream($temporary, $stream)) {
                 throw new RuntimeException("Cannot write file [{$temporary}] to disk [{$diskName}].");
             }
+        } catch (Throwable $e) {
+            rescue(fn () => $disk->delete($temporary), report: false);
+
+            throw $e;
         } finally {
             fclose($stream);
         }
@@ -107,6 +130,8 @@ class FileStore
 
             throw new RuntimeException("Cannot move file [{$temporary}] to [{$target}] on disk [{$diskName}].");
         }
+
+        return $wasMissing;
     }
 
     private function record(string $sha256, string $disk, string $path, int $size, ?string $mime): StoredFile
@@ -161,12 +186,16 @@ class FileStore
         return $query->first();
     }
 
-    private function hashOnDisk(Filesystem $disk, string $path): ?string
+    /**
+     * A file that cannot be read is not reported as corrupt: that would be a
+     * false alarm for a permission problem or a transient disk error.
+     */
+    private function hashOnDisk(Filesystem $disk, string $diskName, string $path): string
     {
         $stream = $disk->readStream($path);
 
         if (! is_resource($stream)) {
-            return null;
+            throw new RuntimeException("Cannot read the existing file [{$path}] on disk [{$diskName}] to compare its content.");
         }
 
         try {
@@ -179,11 +208,11 @@ class FileStore
         }
     }
 
-    private function reportCorruptFile(string $sha256, string $disk, string $target, string $evidence): void
+    private function reportFileProblem(string $message): void
     {
         event(new IntegrityViolationDetected(new IntegrityResult([new IntegrityError(
             IntegrityErrorType::FileMismatch,
-            "File [{$target}] on disk [{$disk}] did not match its hash [{$sha256}]; it was kept as [{$evidence}] and replaced.",
+            $message,
             (new StoredFile)->getMorphClass(),
             null,
         )], 0, null)));
@@ -230,6 +259,11 @@ class FileStore
         }
 
         $target = fopen($path, 'wb');
+
+        // Like Flysystem: a stream that was just written to is read from its start.
+        if (stream_get_meta_data($stream)['seekable'] && ftell($stream) !== 0) {
+            rewind($stream);
+        }
 
         try {
             if ($target === false || stream_copy_to_stream($stream, $target) === false) {

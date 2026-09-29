@@ -15,9 +15,10 @@ use MuellerSchmitz\ModelIntegrity\Models\StoredFile;
  * of the snapshot, so the file is part of the model's history.
  *
  * Setting the attribute does not store anything: store the file first with
- * IntegrityFiles::store() and assign the result. Reading the attribute loads
- * the StoredFile with one query per model; for lists read the hash with
- * getRawOriginal() and load files with IntegrityFiles::find().
+ * IntegrityFiles::store() and assign the result. Reading or serializing the
+ * attribute loads the StoredFile with one query per model; for lists hide the
+ * attribute, read the hash with getRawOriginal() and load files with
+ * IntegrityFiles::find().
  *
  * @implements CastsAttributes<StoredFile|null, mixed>
  */

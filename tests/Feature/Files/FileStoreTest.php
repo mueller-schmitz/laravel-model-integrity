@@ -116,14 +116,79 @@ it('writes files atomically, without temporary files left behind', function (): 
     expect(Storage::disk('integrity')->files(dirname($file->path)))->toBe([$file->path]);
 });
 
-it('restores a recorded file missing on the disk when the same content is stored again', function (): void {
+it('restores a recorded file missing on the disk when the same content is stored again, and reports it', function (): void {
     $file = $this->store->store(tempFileWith('heal me'));
     Storage::disk('integrity')->delete($file->path);
+    Event::fake([IntegrityViolationDetected::class]);
 
     $again = $this->store->store(tempFileWith('heal me'));
 
     expect($again->is($file))->toBeTrue()
         ->and($again->contents())->toBe('heal me');
+
+    Event::assertDispatched(IntegrityViolationDetected::class, fn (IntegrityViolationDetected $e): bool => str_contains($e->result->errors()->sole()->message, 'was missing'));
+});
+
+it('reports nothing when a file is stored for the first time or again', function (): void {
+    Event::fake([IntegrityViolationDetected::class]);
+
+    $this->store->store(tempFileWith('quiet'));
+    $this->store->store(tempFileWith('quiet'));
+
+    Event::assertNotDispatched(IntegrityViolationDetected::class);
+});
+
+it('does not treat an existing file it cannot read as corrupt', function (): void {
+    Event::fake([IntegrityViolationDetected::class]);
+    $file = $this->store->store(tempFileWith('unreadable'));
+    $disk = Mockery::mock(Storage::disk('integrity'))->makePartial();
+    $disk->shouldReceive('readStream')->andReturnNull();
+    Storage::set('integrity', $disk);
+
+    expect(fn () => $this->store->store(tempFileWith('unreadable')))->toThrow(RuntimeException::class, 'Cannot read');
+
+    expect(Storage::disk('integrity')->files(dirname($file->path)))->toBe([$file->path]);
+    Event::assertNotDispatched(IntegrityViolationDetected::class);
+});
+
+it('keeps a corrupt file in place when it cannot be moved away as evidence', function (): void {
+    Event::fake([IntegrityViolationDetected::class]);
+    $sha = hash('sha256', 'original');
+    $path = 'files/'.substr($sha, 0, 2).'/'.substr($sha, 2, 2).'/'.$sha;
+    Storage::disk('integrity')->put($path, 'tampered');
+    $disk = Mockery::mock(Storage::disk('integrity'))->makePartial();
+    $disk->shouldReceive('move')->with($path, Mockery::pattern('/\.corrupt-/'))->andReturnFalse();
+    Storage::set('integrity', $disk);
+
+    expect(fn () => $this->store->store(tempFileWith('original')))->toThrow(RuntimeException::class, 'evidence');
+
+    expect(Storage::disk('integrity')->get($path))->toBe('tampered')
+        ->and(StoredFile::query()->count())->toBe(0);
+    Event::assertNotDispatched(IntegrityViolationDetected::class);
+});
+
+it('removes the temporary file when writing fails', function (): void {
+    $disk = Mockery::mock(Storage::disk('integrity'))->makePartial();
+    $disk->shouldReceive('writeStream')->andReturnUsing(function (string $path): bool {
+        Storage::disk('integrity')->put($path, 'partial');
+
+        return false;
+    });
+    Storage::set('integrity', $disk);
+
+    expect(fn () => $this->store->store(tempFileWith('broken write')))->toThrow(RuntimeException::class, 'Cannot write');
+
+    expect(Storage::disk('integrity')->allFiles())->toBe([]);
+});
+
+it('reads a stream from its start', function (): void {
+    $stream = fopen('php://temp', 'r+');
+    fwrite($stream, 'written, not rewound');
+
+    $file = $this->store->store($stream);
+    fclose($stream);
+
+    expect($file->contents())->toBe('written, not rewound');
 });
 
 it('writes the file outside the transaction that locks the chain head', function (): void {

@@ -38,6 +38,12 @@ class TriggersCommand extends Command
             fn (string $table): bool => $connection->getSchemaBuilder()->hasTable($table),
         );
 
+        if ($tables === []) {
+            $this->error('No integrity tables found; run the migrations (php artisan migrate) first.');
+
+            return self::FAILURE;
+        }
+
         foreach ($tables as $table) {
             if ($this->option('remove') === true) {
                 $triggers->uninstall($connection, $table);

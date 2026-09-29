@@ -197,13 +197,13 @@ class IntegrityChecker
      */
     public function checkFiles(bool $contents = true): IntegrityResult
     {
-        $this->fileProblems = [];
         $errors = [];
         $count = 0;
 
         foreach (StoredFile::query()->lazyById(self::CHUNK) as $file) {
             $count++;
-            $message = $this->storedFileProblem($file, $contents);
+            // Each file is listed once, so the per-check cache is bypassed.
+            $message = $this->findStoredFileProblem($file, $contents);
 
             if ($message !== null) {
                 $errors[] = $this->error(
@@ -259,14 +259,19 @@ class IntegrityChecker
             $connection->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
         }
 
-        return $connection->transaction(function () use ($connection, $driver, $outermost, $callback): mixed {
-            // PostgreSQL defaults to READ COMMITTED; set before the first query.
-            if ($outermost && $driver === 'pgsql') {
-                $connection->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-            }
+        try {
+            return $connection->transaction(function () use ($connection, $driver, $outermost, $callback): mixed {
+                // PostgreSQL defaults to READ COMMITTED; set before the first query.
+                if ($outermost && $driver === 'pgsql') {
+                    $connection->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+                }
 
-            return $callback();
-        });
+                return $callback();
+            });
+        } finally {
+            // The checker is a singleton; long-running workers keep it alive.
+            $this->fileProblems = [];
+        }
     }
 
     /**
@@ -687,8 +692,6 @@ class IntegrityChecker
 
     /**
      * What is wrong with a stored file on its disk, or null if nothing is.
-     */
-    /**
      * Cached per file and check: shared files are looked up on the disk once.
      */
     private function storedFileProblem(StoredFile $file, bool $contents): ?string
@@ -729,9 +732,12 @@ class IntegrityChecker
                     return "cannot be read from disk [{$file->disk}]";
                 }
 
-                $context = hash_init('sha256');
-                hash_update_stream($context, $stream);
-                fclose($stream);
+                try {
+                    $context = hash_init('sha256');
+                    hash_update_stream($context, $stream);
+                } finally {
+                    fclose($stream);
+                }
 
                 if (! hash_equals($file->sha256, hash_final($context))) {
                     return 'has a content that does not match its hash';
