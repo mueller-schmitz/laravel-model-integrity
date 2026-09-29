@@ -8,6 +8,8 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-29
+
 ### Added
 
 - Files in the chain: `IntegrityFiles::store()` stores files content-addressed under their SHA-256 hash on a configurable disk, once per content, written atomically outside the chain lock; a file with other content found under the final name is kept as evidence and replaced, a recorded file missing on the disk is restored, both reported by `IntegrityViolationDetected`; every stored file (`StoredFile`, morph alias `model-integrity.file`) is a version in the global chain
@@ -61,6 +63,7 @@ First release.
 - Commands `model-integrity:install`, `model-integrity:grants` and `model-integrity:verify` (exit code 1 on violations)
 - Tested with PHP 8.3–8.5, Laravel 12 and 13, MySQL 8.0/8.4, MariaDB 10.11/11.4, PostgreSQL 14/17 and SQLite, including parallel writers, verification during writes and a database user restricted to the printed privileges
 
-[Unreleased]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mueller-schmitz/laravel-model-integrity/releases/tag/v0.1.0
