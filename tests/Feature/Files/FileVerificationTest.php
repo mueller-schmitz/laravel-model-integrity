@@ -97,6 +97,24 @@ it('reports a stored file missing on the disk even if no model references it', f
     expect(fileErrors($this->checker->checkFiles(contents: false)))->toHaveCount(1);
 });
 
+it('reports files of hard-deleted models', function (): void {
+    $invoiceFile = IntegrityFiles::store(fileWithContents('deleted contract'));
+    $contract = Contract::query()->create(['title' => 'Gone', 'document' => $invoiceFile]);
+    $contract->forceDelete();
+    Storage::disk('integrity')->delete($invoiceFile->path);
+
+    expect(fileErrors($this->checker->checkModel($contract)))->toHaveCount(1);
+});
+
+it('reports a disk that is no longer configured instead of crashing', function (): void {
+    DB::table('integrity_files')->where('id', $this->second->id)->update(['disk' => 'removed-disk']);
+
+    $errors = fileErrors($this->checker->checkModel($this->contract));
+
+    expect($errors)->toHaveCount(1)
+        ->and($errors[0])->toContain('cannot be checked');
+});
+
 describe('verify command', function (): void {
     it('hashes file contents with --files', function (): void {
         Storage::disk('integrity')->put($this->second->path, str_repeat('x', strlen('signed version')));

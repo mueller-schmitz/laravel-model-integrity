@@ -5,20 +5,33 @@ declare(strict_types=1);
 namespace MuellerSchmitz\ModelIntegrity\Files;
 
 use finfo;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Database\Connection;
+use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
+use MuellerSchmitz\ModelIntegrity\Events\IntegrityViolationDetected;
 use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
 use MuellerSchmitz\ModelIntegrity\Models\StoredFile;
 use MuellerSchmitz\ModelIntegrity\Recording\ChainName;
+use MuellerSchmitz\ModelIntegrity\Verification\IntegrityError;
+use MuellerSchmitz\ModelIntegrity\Verification\IntegrityErrorType;
+use MuellerSchmitz\ModelIntegrity\Verification\IntegrityResult;
 use RuntimeException;
 use SplFileInfo;
 
 /**
  * Stores files content-addressed under their SHA-256 hash. Identical content
- * is stored once; an existing file is never overwritten.
+ * is stored once; a file with the right content is never replaced.
+ *
+ * The file is written before the database transaction, so the global chain
+ * head is not locked during the upload. Writes go to a temporary name and are
+ * moved into place, so an aborted write never leaves a partial file under the
+ * final name.
  */
 class FileStore
 {
@@ -37,7 +50,12 @@ class FileStore
                 throw new RuntimeException("Cannot read file [{$path}].");
             }
 
-            return $this->persist($path, $sha256, $size, $mime ?? $this->detectMime($path));
+            $diskName = Config::string('model-integrity.files.disk', 'local');
+            $target = $this->targetPath($sha256);
+
+            $this->ensureOnDisk(Storage::disk($diskName), $diskName, $target, $path, $sha256);
+
+            return $this->record($sha256, $diskName, $target, $size, $mime ?? $this->detectMime($path));
         } finally {
             if ($temporary) {
                 @unlink($path);
@@ -50,11 +68,52 @@ class FileStore
         return StoredFile::query()->where('sha256', $sha256)->first();
     }
 
-    private function persist(string $path, string $sha256, int $size, ?string $mime): StoredFile
+    /**
+     * Makes sure the target holds exactly this content. A missing file is
+     * written (also for an existing record: it heals a lost file); a file with
+     * other content is kept as evidence under another name and replaced.
+     */
+    private function ensureOnDisk(Filesystem $disk, string $diskName, string $target, string $path, string $sha256): void
+    {
+        if ($disk->exists($target)) {
+            if ($this->hashOnDisk($disk, $target) === $sha256) {
+                return;
+            }
+
+            $evidence = $target.'.corrupt-'.Carbon::now('UTC')->format('YmdHis').'-'.Str::random(6);
+            $disk->move($target, $evidence);
+            $this->reportCorruptFile($sha256, $diskName, $target, $evidence);
+        }
+
+        $temporary = $target.'.tmp-'.Str::random(16);
+        $stream = fopen($path, 'rb');
+
+        if ($stream === false) {
+            throw new RuntimeException("Cannot read file [{$path}].");
+        }
+
+        try {
+            if (! $disk->writeStream($temporary, $stream)) {
+                throw new RuntimeException("Cannot write file [{$temporary}] to disk [{$diskName}].");
+            }
+        } finally {
+            fclose($stream);
+        }
+
+        // A parallel store of the same content may have moved its copy into
+        // place meanwhile; the content is identical, so replacing it is harmless.
+        if (! $disk->move($temporary, $target)) {
+            $disk->delete($temporary);
+
+            throw new RuntimeException("Cannot move file [{$temporary}] to [{$target}] on disk [{$diskName}].");
+        }
+    }
+
+    private function record(string $sha256, string $disk, string $path, int $size, ?string $mime): StoredFile
     {
         $connection = $this->connection();
 
-        return $connection->transaction(function () use ($connection, $path, $sha256, $size, $mime): StoredFile {
+        return $connection->transaction(function () use ($connection, $sha256, $disk, $path, $size, $mime): StoredFile {
             // The global head lock serializes stores of the same content without
             // locking integrity_files, on which the application may only INSERT.
             $head = $connection->table(Config::string('model-integrity.tables.heads'))
@@ -70,31 +129,64 @@ class FileStore
                 return $existing;
             }
 
-            $diskName = Config::string('model-integrity.files.disk', 'local');
-            $target = $this->targetPath($sha256);
-            $disk = Storage::disk($diskName);
-
-            // Content-addressed: an existing file with this name must not be replaced.
-            if (! $disk->exists($target)) {
-                $stream = fopen($path, 'rb');
-
-                if ($stream === false || ! $disk->writeStream($target, $stream)) {
-                    throw new RuntimeException("Cannot write file [{$target}] to disk [{$diskName}].");
-                }
-
-                if (is_resource($stream)) {
-                    fclose($stream);
-                }
+            try {
+                return StoredFile::query()->create([
+                    'sha256' => $sha256,
+                    'disk' => $disk,
+                    'path' => $path,
+                    'size' => $size,
+                    'mime' => $mime,
+                ]);
+            } catch (UniqueConstraintViolationException $e) {
+                // The caller's transaction read earlier, so under REPEATABLE READ
+                // its snapshot misses a row a parallel store has committed.
+                return $this->findCommitted($connection, $sha256) ?? throw $e;
             }
-
-            return StoredFile::query()->create([
-                'sha256' => $sha256,
-                'disk' => $diskName,
-                'path' => $target,
-                'size' => $size,
-                'mime' => $mime,
-            ]);
         });
+    }
+
+    /**
+     * Reads the latest committed row regardless of the transaction's snapshot:
+     * a shared lock on MySQL/MariaDB (needs SELECT only), a plain read on
+     * PostgreSQL, whose default READ COMMITTED sees committed rows.
+     */
+    private function findCommitted(Connection $connection, string $sha256): ?StoredFile
+    {
+        $query = StoredFile::query()->where('sha256', $sha256);
+
+        if (in_array($connection->getDriverName(), ['mysql', 'mariadb'], true)) {
+            $query->sharedLock();
+        }
+
+        return $query->first();
+    }
+
+    private function hashOnDisk(Filesystem $disk, string $path): ?string
+    {
+        $stream = $disk->readStream($path);
+
+        if (! is_resource($stream)) {
+            return null;
+        }
+
+        try {
+            $context = hash_init('sha256');
+            hash_update_stream($context, $stream);
+
+            return hash_final($context);
+        } finally {
+            fclose($stream);
+        }
+    }
+
+    private function reportCorruptFile(string $sha256, string $disk, string $target, string $evidence): void
+    {
+        event(new IntegrityViolationDetected(new IntegrityResult([new IntegrityError(
+            IntegrityErrorType::FileMismatch,
+            "File [{$target}] on disk [{$disk}] did not match its hash [{$sha256}]; it was kept as [{$evidence}] and replaced.",
+            (new StoredFile)->getMorphClass(),
+            null,
+        )], 0, null)));
     }
 
     private function targetPath(string $sha256): string
@@ -110,16 +202,7 @@ class FileStore
     private function localPath(mixed $file): array
     {
         if (is_resource($file)) {
-            $path = tempnam(sys_get_temp_dir(), 'model-integrity-');
-            $target = $path === false ? false : fopen($path, 'wb');
-
-            if ($path === false || $target === false || stream_copy_to_stream($file, $target) === false) {
-                throw new RuntimeException('Cannot copy the stream to a temporary file.');
-            }
-
-            fclose($target);
-
-            return [$path, true];
+            return [$this->copyToTemporaryFile($file), true];
         }
 
         $path = match (true) {
@@ -133,6 +216,36 @@ class FileStore
         }
 
         return [$path, false];
+    }
+
+    /**
+     * @param  resource  $stream
+     */
+    private function copyToTemporaryFile($stream): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'model-integrity-');
+
+        if ($path === false) {
+            throw new RuntimeException('Cannot create a temporary file.');
+        }
+
+        $target = fopen($path, 'wb');
+
+        try {
+            if ($target === false || stream_copy_to_stream($stream, $target) === false) {
+                throw new RuntimeException('Cannot copy the stream to a temporary file.');
+            }
+        } catch (RuntimeException $e) {
+            @unlink($path);
+
+            throw $e;
+        } finally {
+            if (is_resource($target)) {
+                fclose($target);
+            }
+        }
+
+        return $path;
     }
 
     private function detectMime(string $path): ?string

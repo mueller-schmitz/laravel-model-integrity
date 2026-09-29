@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace MuellerSchmitz\ModelIntegrity\Casts;
 
 use Illuminate\Contracts\Database\Eloquent\CastsAttributes;
+use Illuminate\Contracts\Database\Eloquent\SerializesCastableAttributes;
 use Illuminate\Database\Eloquent\Model;
 use InvalidArgumentException;
 use MuellerSchmitz\ModelIntegrity\Models\StoredFile;
@@ -14,11 +15,13 @@ use MuellerSchmitz\ModelIntegrity\Models\StoredFile;
  * of the snapshot, so the file is part of the model's history.
  *
  * Setting the attribute does not store anything: store the file first with
- * IntegrityFiles::store() and assign the result.
+ * IntegrityFiles::store() and assign the result. Reading the attribute loads
+ * the StoredFile with one query per model; for lists read the hash with
+ * getRawOriginal() and load files with IntegrityFiles::find().
  *
  * @implements CastsAttributes<StoredFile|null, mixed>
  */
-class AsIntegrityFile implements CastsAttributes
+class AsIntegrityFile implements CastsAttributes, SerializesCastableAttributes
 {
     public function get(Model $model, string $key, mixed $value, array $attributes): ?StoredFile
     {
@@ -35,5 +38,13 @@ class AsIntegrityFile implements CastsAttributes
                 "[{$key}] expects a StoredFile or a lowercase SHA-256 hash; store files with IntegrityFiles::store() first."
             ),
         };
+    }
+
+    /**
+     * Arrays and JSON contain the hash only, not the storage path.
+     */
+    public function serialize(Model $model, string $key, mixed $value, array $attributes): ?string
+    {
+        return $value instanceof StoredFile ? $value->sha256 : null;
     }
 }

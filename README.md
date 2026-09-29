@@ -48,8 +48,10 @@ php artisan migrate
 composer require mueller-schmitz/laravel-model-integrity:^0.2
 php artisan model-integrity:install   # publishes only the new migrations for stored files
 php artisan migrate
-php artisan model-integrity:grants    # adds the privileges on integrity_files
+php artisan model-integrity:grants    # use the same options as at installation, e.g. --all-tables
 ```
+
+Run the printed statements as an administrative user: with `--all-tables` the application user has no privileges on the new `integrity_files` table until then, and storing files fails.
 
 Existing versions stay valid; the hash format is unchanged. A config file published with 0.1 keeps working: new keys (`files`, `actor`, `tables.files`) fall back to their defaults.
 
@@ -172,6 +174,11 @@ IntegrityFiles::find($sha256);
 `store()` accepts uploaded files, file objects, local paths and streams. Assigning the attribute stores nothing by itself: store the file first and assign the result (or its hash).
 
 - Files are written to `model-integrity.files.disk` (default `local`) under `integrity-files/{aa}/{bb}/{sha256}`. Use a private disk and restrict write access: a changed file on the disk is detected, not prevented.
+- Disk name and path are recorded with every file and cannot change later. Configure a dedicated disk (e.g. `integrity`) from the start, so the storage behind it can be moved over the years without renaming the disk.
+- Files are written to a temporary name and moved into place before the database records them, so an aborted upload never leaves a partial file under the final name, and the chain head is not locked during the upload. If a file with other content is found under the final name, it is kept as evidence (`….corrupt-{time}-{random}`), replaced with the correct content, and an `IntegrityViolationDetected` event is dispatched. A recorded file missing on the disk is restored when the same content is stored again.
+- Stored files use the morph alias `model-integrity.file`, which the package adds to the morph map; this works with `Relation::enforceMorphMap()`.
+- Arrays and JSON of a model contain only the hash of a file attribute. Reading the attribute loads the stored file with one query per model; for lists, read the hash with `getRawOriginal()` and load files with `IntegrityFiles::find()`.
+- `store()` reads any local path it is given: never pass paths from user input.
 - If the database transaction rolls back after the file was written, the file stays on the disk without a record. It is harmless (the same content gets the same name) and not deleted automatically.
 - Files are never deleted. Personal data in files cannot be removed until crypto-shredding arrives (planned for v0.4); keep it in mind before storing such files.
 
@@ -258,7 +265,7 @@ php artisan model-integrity:verify                                  # global cha
 php artisan model-integrity:verify --model="App\Models\Invoice"     # one type (class or morph alias)
 php artisan model-integrity:verify --model="App\Models\Invoice" --id=42
 php artisan model-integrity:verify --fail-fast                      # stop at the first failing model
-php artisan model-integrity:verify --files                          # also hash every stored file
+php artisan model-integrity:verify --files                          # also hash every stored file (all files, also with --model)
 php artisan model-integrity:verify -v                               # print each step
 ```
 
@@ -284,7 +291,7 @@ Schedule::command('model-integrity:verify')->dailyAt('03:00')->emailOutputOnFail
 | `Unverifiable` | Versions exist whose model class is missing, does not use the trait, or was recorded under a former morph class |
 | `FileMismatch` | A file referenced by any version is unknown, missing on its disk or has another size; with `checkFiles()`/`--files` also a changed content |
 
-Every check verifies that the files referenced by a model's versions exist with their recorded size. Hashing the content reads every file, so it only runs with `checkFiles()` or `verify --files`, for example weekly in the scheduler.
+Every model check verifies that the files referenced by a model's versions exist with their recorded size. Hashing the content reads every file, so it only runs with `checkFiles()` or `verify --files`, for example weekly in the scheduler.
 
 When a version is replaced and re-hashed, the successor no longer references it, so the replaced version is reported as `BrokenChain`. Violations dispatch an `IntegrityViolationDetected` event with the result (and the model for `checkModel()`). `lastValidVersion()` is only set by `checkModel()`.
 

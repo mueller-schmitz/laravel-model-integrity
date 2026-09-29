@@ -47,6 +47,13 @@ try {
             // All workers change the same model and compete for its next version.
             Invoice::query()->findOrFail((int) $sharedId)->update(['note' => "worker {$worker} write {$i}"]);
         }
+    } elseif ($mode === 'store-one') {
+        // Stores the content given as the last argument once.
+        $stream = fopen('php://memory', 'r+');
+        fwrite($stream, (string) $sharedId);
+        rewind($stream);
+        IntegrityFiles::store($stream);
+        fclose($stream);
     } elseif ($mode === 'files') {
         // Every worker stores the same shared content and its own content.
         for ($i = 1; $i <= (int) $writes; $i++) {

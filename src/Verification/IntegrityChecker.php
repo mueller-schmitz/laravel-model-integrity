@@ -15,6 +15,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use League\Flysystem\UnableToRetrieveMetadata;
 use MuellerSchmitz\ModelIntegrity\Casts\AsIntegrityFile;
 use MuellerSchmitz\ModelIntegrity\Concerns\HasIntegrity;
 use MuellerSchmitz\ModelIntegrity\Events\IntegrityViolationDetected;
@@ -27,6 +28,7 @@ use MuellerSchmitz\ModelIntegrity\Models\Version;
 use MuellerSchmitz\ModelIntegrity\Recording\ChainName;
 use MuellerSchmitz\ModelIntegrity\Recording\ModelOptions;
 use MuellerSchmitz\ModelIntegrity\Recording\SnapshotBuilder;
+use Throwable;
 
 /**
  * Verifies recorded versions, both chains, the chain heads and the current
@@ -54,6 +56,9 @@ class IntegrityChecker
 
     /** @var array<int, bool> hash validity by sequence, per model check */
     private array $validHashes = [];
+
+    /** @var array<string, string|null> problems of stored files by sha256 and depth, per check */
+    private array $fileProblems = [];
 
     public function __construct(
         private readonly Hasher $hasher,
@@ -185,28 +190,31 @@ class IntegrityChecker
      * Checks every stored file: present on its disk with the recorded size, and
      * with $contents also its content hash. Hashing reads every file, so run
      * it less often than the other checks. checkedVersions() counts the files.
+     *
+     * Runs without a read transaction: file records are append-only, and a
+     * transaction held open while hashing large amounts of data would keep an
+     * old read view alive for hours.
      */
     public function checkFiles(bool $contents = true): IntegrityResult
     {
-        $result = $this->consistently(function () use ($contents): IntegrityResult {
-            $errors = [];
-            $count = 0;
+        $this->fileProblems = [];
+        $errors = [];
+        $count = 0;
 
-            foreach (StoredFile::query()->lazyById(self::CHUNK) as $file) {
-                $count++;
-                $message = $this->storedFileProblem($file, $contents);
+        foreach (StoredFile::query()->lazyById(self::CHUNK) as $file) {
+            $count++;
+            $message = $this->storedFileProblem($file, $contents);
 
-                if ($message !== null) {
-                    $errors[] = $this->error(
-                        IntegrityErrorType::FileMismatch,
-                        "Stored file [{$file->sha256}] {$message}.",
-                        [$file->getMorphClass(), $this->key($file)],
-                    );
-                }
+            if ($message !== null) {
+                $errors[] = $this->error(
+                    IntegrityErrorType::FileMismatch,
+                    "Stored file [{$file->sha256}] {$message}.",
+                    [$file->getMorphClass(), $this->key($file)],
+                );
             }
+        }
 
-            return new IntegrityResult($errors, $count, null);
-        });
+        $result = new IntegrityResult($errors, $count, null);
 
         $this->dispatchOnFailure($result, null);
 
@@ -241,6 +249,7 @@ class IntegrityChecker
      */
     protected function consistently(Closure $callback): mixed
     {
+        $this->fileProblems = [];
         $connection = DB::connection($this->connection());
         $driver = $connection->getDriverName();
         $outermost = $connection->transactionLevel() === 0;
@@ -679,34 +688,57 @@ class IntegrityChecker
     /**
      * What is wrong with a stored file on its disk, or null if nothing is.
      */
+    /**
+     * Cached per file and check: shared files are looked up on the disk once.
+     */
     private function storedFileProblem(StoredFile $file, bool $contents): ?string
     {
-        $disk = Storage::disk($file->disk);
+        $key = $file->sha256.($contents ? ':content' : ':size');
 
-        if (! $disk->exists($file->path)) {
-            return "is missing on disk [{$file->disk}]";
+        if (! array_key_exists($key, $this->fileProblems)) {
+            $this->fileProblems[$key] = $this->findStoredFileProblem($file, $contents);
         }
 
-        $size = $disk->size($file->path);
+        return $this->fileProblems[$key];
+    }
 
-        if ($size !== $file->size) {
-            return "has {$size} bytes on disk, but {$file->size} were recorded";
-        }
+    /**
+     * Disk errors (e.g. a disk that is no longer configured, network errors)
+     * are reported as findings instead of aborting the check.
+     */
+    private function findStoredFileProblem(StoredFile $file, bool $contents): ?string
+    {
+        try {
+            $disk = Storage::disk($file->disk);
 
-        if ($contents) {
-            $stream = $disk->readStream($file->path);
-
-            if (! is_resource($stream)) {
-                return "cannot be read from disk [{$file->disk}]";
+            // One metadata request; it fails for a missing file.
+            try {
+                $size = $disk->size($file->path);
+            } catch (UnableToRetrieveMetadata) {
+                return "is missing on disk [{$file->disk}]";
             }
 
-            $context = hash_init('sha256');
-            hash_update_stream($context, $stream);
-            fclose($stream);
-
-            if (! hash_equals($file->sha256, hash_final($context))) {
-                return 'has a content that does not match its hash';
+            if ($size !== $file->size) {
+                return "has {$size} bytes on disk, but {$file->size} were recorded";
             }
+
+            if ($contents) {
+                $stream = $disk->readStream($file->path);
+
+                if (! is_resource($stream)) {
+                    return "cannot be read from disk [{$file->disk}]";
+                }
+
+                $context = hash_init('sha256');
+                hash_update_stream($context, $stream);
+                fclose($stream);
+
+                if (! hash_equals($file->sha256, hash_final($context))) {
+                    return 'has a content that does not match its hash';
+                }
+            }
+        } catch (Throwable $e) {
+            return "cannot be checked on disk [{$file->disk}]: ".$e->getMessage();
         }
 
         return null;

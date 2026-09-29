@@ -33,10 +33,23 @@ class StoredFile extends Model
 
     protected string $integrityDeletes = 'forbid';
 
-    /** @var list<string> */
-    protected array $integrityExcept = [];
+    /**
+     * The upload time is interpreted in the app timezone when read; the
+     * version records its own UTC time, so it is left out of the snapshot.
+     *
+     * @var list<string>
+     */
+    protected array $integrityExcept = ['created_at'];
 
     protected $guarded = [];
+
+    /** Fixed alias: versions store it forever, and apps may enforce a morph map. */
+    public const MORPH_ALIAS = 'model-integrity.file';
+
+    public function getMorphClass(): string
+    {
+        return self::MORPH_ALIAS;
+    }
 
     public function getTable(): string
     {

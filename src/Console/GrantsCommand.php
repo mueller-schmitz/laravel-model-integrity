@@ -30,7 +30,7 @@ class GrantsCommand extends Command
         $prefix = $connection->getTablePrefix();
         $versions = $prefix.Config::string('model-integrity.tables.versions');
         $heads = $prefix.Config::string('model-integrity.tables.heads');
-        // Printed without connecting to the database; a GRANT on a table that
+        // Without --all-tables printed without querying the database; a GRANT on a table that
         // is not migrated yet fails on MySQL, so the output says to migrate first.
         $files = $prefix.Config::string('model-integrity.tables.files', 'integrity_files');
 
@@ -56,7 +56,7 @@ class GrantsCommand extends Command
             $connection->getDatabaseName(),
             $versions,
             $heads,
-            $allTables ? $this->otherTables($connection, array_values(array_filter([$versions, $heads, $files]))) : [],
+            $allTables ? $this->otherTables($connection, [$versions, $heads, $files]) : [],
             $allTables,
             $allTables ? $this->views($connection) : [],
             $files,

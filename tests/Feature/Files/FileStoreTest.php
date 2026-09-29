@@ -2,14 +2,18 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Storage;
+use MuellerSchmitz\ModelIntegrity\Events\IntegrityViolationDetected;
 use MuellerSchmitz\ModelIntegrity\Exceptions\ImmutableModelException;
 use MuellerSchmitz\ModelIntegrity\Facades\IntegrityFiles;
 use MuellerSchmitz\ModelIntegrity\Files\FileStore;
 use MuellerSchmitz\ModelIntegrity\Models\StoredFile;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
+use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Contract;
 
 beforeEach(function (): void {
     Storage::fake('integrity');
@@ -76,15 +80,89 @@ it('records a version for each stored file in the global chain', function (): vo
         ->and($file->verifyIntegrity()->passes())->toBeTrue();
 });
 
-it('never overwrites an existing file on the disk', function (): void {
+it('keeps an existing file with the right content', function (): void {
     $sha = hash('sha256', 'original');
     $path = 'files/'.substr($sha, 0, 2).'/'.substr($sha, 2, 2).'/'.$sha;
-    Storage::disk('integrity')->put($path, 'tampered');
+    Storage::disk('integrity')->put($path, 'original');
+    $modified = Storage::disk('integrity')->lastModified($path);
 
     $this->store->store(tempFileWith('original'));
 
-    // The existing file is kept; the verification reports its content (checkFiles).
-    expect(Storage::disk('integrity')->get($path))->toBe('tampered');
+    expect(Storage::disk('integrity')->get($path))->toBe('original')
+        ->and(Storage::disk('integrity')->lastModified($path))->toBe($modified);
+});
+
+it('never attests an existing file with other content, and keeps it as evidence', function (): void {
+    Event::fake([IntegrityViolationDetected::class]);
+    $sha = hash('sha256', 'original');
+    $path = 'files/'.substr($sha, 0, 2).'/'.substr($sha, 2, 2).'/'.$sha;
+    // e.g. a partial file left by an aborted write, or a tampered one
+    Storage::disk('integrity')->put($path, 'origi');
+
+    $file = $this->store->store(tempFileWith('original'));
+
+    $evidence = collect(Storage::disk('integrity')->files(dirname($path)))->first(fn (string $f): bool => str_contains($f, '.corrupt-'));
+
+    expect($file->contents())->toBe('original')
+        ->and($evidence)->not->toBeNull()
+        ->and(Storage::disk('integrity')->get($evidence))->toBe('origi');
+
+    Event::assertDispatched(IntegrityViolationDetected::class, fn (IntegrityViolationDetected $e): bool => $e->result->errors()->sole()->type->value === 'file_mismatch');
+});
+
+it('writes files atomically, without temporary files left behind', function (): void {
+    $file = $this->store->store(tempFileWith('atomic'));
+
+    expect(Storage::disk('integrity')->files(dirname($file->path)))->toBe([$file->path]);
+});
+
+it('restores a recorded file missing on the disk when the same content is stored again', function (): void {
+    $file = $this->store->store(tempFileWith('heal me'));
+    Storage::disk('integrity')->delete($file->path);
+
+    $again = $this->store->store(tempFileWith('heal me'));
+
+    expect($again->is($file))->toBeTrue()
+        ->and($again->contents())->toBe('heal me');
+});
+
+it('writes the file outside the transaction that locks the chain head', function (): void {
+    $writes = [];
+    DB::listen(function ($query) use (&$writes): void {
+        if (str_contains($query->sql, 'integrity_heads') && str_contains(strtolower($query->sql), 'for update')) {
+            $writes[] = Storage::disk('integrity')->allFiles();
+        }
+    });
+
+    $file = $this->store->store(tempFileWith('outside'));
+
+    // When the head is locked, the file is already on the disk.
+    expect($writes)->not->toBeEmpty()
+        ->and($writes[0])->toContain($file->path);
+})->skip(fn () => DB::connection()->getDriverName() === 'sqlite', 'SQLite has no FOR UPDATE');
+
+it('exposes only the hash when serializing a model', function (): void {
+    $file = $this->store->store(tempFileWith('private path'));
+    $contract = Contract::query()->create(['title' => 'Lease', 'document' => $file]);
+
+    expect($contract->fresh()->toArray()['document'])->toBe($file->sha256);
+});
+
+it('works with an enforced morph map', function (): void {
+    Relation::requireMorphMap();
+
+    try {
+        $file = $this->store->store(tempFileWith('strict app'));
+    } finally {
+        Relation::requireMorphMap(false);
+    }
+
+    expect($file->getMorphClass())->toBe('model-integrity.file')
+        ->and($file->integrityVersions()->sole()->versionable_type)->toBe('model-integrity.file');
+});
+
+it('does not put the upload time into the snapshot, which depends on the app timezone', function (): void {
+    expect($this->store->store(tempFileWith('timeless'))->integrityVersions()->sole()->snapshot)->not->toHaveKey('created_at');
 });
 
 it('uses a given mime type', function (): void {

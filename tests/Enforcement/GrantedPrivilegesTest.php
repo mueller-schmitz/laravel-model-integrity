@@ -147,6 +147,12 @@ it('lets the application store and reference files', function (): void {
         ->toThrow(QueryException::class, $this->restricted->getDriverName() === 'pgsql' ? 'permission denied' : 'denied');
 });
 
+it('allows the shared lock the file store uses to find committed records on MySQL and MariaDB', function (): void {
+    $this->restricted->transaction(function (): void {
+        expect($this->restricted->table('integrity_files')->where('sha256', str_repeat('a', 64))->sharedLock()->first())->toBeNull();
+    });
+})->skip(fn () => DB::connection()->getDriverName() === 'pgsql', 'PostgreSQL reads committed rows without a lock');
+
 it('allows reading and appending versions', function (): void {
     $this->restricted->table('integrity_versions')->insert(versionRow(1));
 
