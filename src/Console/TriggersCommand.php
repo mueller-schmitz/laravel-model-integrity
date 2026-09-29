@@ -26,20 +26,26 @@ class TriggersCommand extends Command
         $configured = config('model-integrity.connection');
         /** @var Connection $connection */
         $connection = DB::connection($this->stringOption('connection') ?? (is_string($configured) ? $configured : null));
-        $table = Config::string('model-integrity.tables.versions');
-
         if (! $triggers->supports($connection)) {
             $this->warn("Append-only triggers are not available for the [{$connection->getDriverName()}] driver.");
 
             return self::SUCCESS;
         }
 
-        if ($this->option('remove') === true) {
-            $triggers->uninstall($connection, $table);
-            $this->info("Append-only triggers removed from [{$table}].");
-        } else {
-            $triggers->install($connection, $table);
-            $this->info("Append-only triggers installed on [{$table}].");
+        // Append-only tables that exist yet; integrity_files arrives with its own migration.
+        $tables = array_filter(
+            [Config::string('model-integrity.tables.versions'), Config::string('model-integrity.tables.files', 'integrity_files')],
+            fn (string $table): bool => $connection->getSchemaBuilder()->hasTable($table),
+        );
+
+        foreach ($tables as $table) {
+            if ($this->option('remove') === true) {
+                $triggers->uninstall($connection, $table);
+                $this->info("Append-only triggers removed from [{$table}].");
+            } else {
+                $triggers->install($connection, $table);
+                $this->info("Append-only triggers installed on [{$table}].");
+            }
         }
 
         return self::SUCCESS;

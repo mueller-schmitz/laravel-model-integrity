@@ -30,6 +30,9 @@ class GrantsCommand extends Command
         $prefix = $connection->getTablePrefix();
         $versions = $prefix.Config::string('model-integrity.tables.versions');
         $heads = $prefix.Config::string('model-integrity.tables.heads');
+        $filesName = Config::string('model-integrity.tables.files', 'integrity_files');
+        // Only once migrated: a GRANT on a missing table fails on MySQL.
+        $files = $connection->getSchemaBuilder()->hasTable($filesName) ? $prefix.$filesName : null;
 
         $driver = $connection->getDriverName();
         $user = $this->user($connection);
@@ -53,9 +56,10 @@ class GrantsCommand extends Command
             $connection->getDatabaseName(),
             $versions,
             $heads,
-            $allTables ? $this->otherTables($connection, [$versions, $heads]) : [],
+            $allTables ? $this->otherTables($connection, array_values(array_filter([$versions, $heads, $files]))) : [],
             $allTables,
             $allTables ? $this->views($connection) : [],
+            $files,
         );
 
         foreach ($lines as $line) {

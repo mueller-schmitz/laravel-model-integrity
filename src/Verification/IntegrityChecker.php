@@ -14,12 +14,15 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use MuellerSchmitz\ModelIntegrity\Casts\AsIntegrityFile;
 use MuellerSchmitz\ModelIntegrity\Concerns\HasIntegrity;
 use MuellerSchmitz\ModelIntegrity\Events\IntegrityViolationDetected;
 use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\InvalidEnvelopeException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\UnsupportedHashFormatException;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
+use MuellerSchmitz\ModelIntegrity\Models\StoredFile;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
 use MuellerSchmitz\ModelIntegrity\Recording\ChainName;
 use MuellerSchmitz\ModelIntegrity\Recording\ModelOptions;
@@ -169,6 +172,38 @@ class IntegrityChecker
     public function checkChain(): IntegrityResult
     {
         $result = $this->consistently(fn (): IntegrityResult => $this->inspectChain());
+
+        $this->dispatchOnFailure($result, null);
+
+        return $result;
+    }
+
+    /**
+     * Checks every stored file: present on its disk with the recorded size, and
+     * with $contents also its content hash. Hashing reads every file, so run
+     * it less often than the other checks. checkedVersions() counts the files.
+     */
+    public function checkFiles(bool $contents = true): IntegrityResult
+    {
+        $result = $this->consistently(function () use ($contents): IntegrityResult {
+            $errors = [];
+            $count = 0;
+
+            foreach (StoredFile::query()->lazyById(self::CHUNK) as $file) {
+                $count++;
+                $message = $this->storedFileProblem($file, $contents);
+
+                if ($message !== null) {
+                    $errors[] = $this->error(
+                        IntegrityErrorType::FileMismatch,
+                        "Stored file [{$file->sha256}] {$message}.",
+                        [$file->getMorphClass(), $this->key($file)],
+                    );
+                }
+            }
+
+            return new IntegrityResult($errors, $count, null);
+        });
 
         $this->dispatchOnFailure($result, null);
 
@@ -387,6 +422,9 @@ class IntegrityChecker
         $previous = null;
         $lastValid = null;
         $chainIntact = true;
+        $fileAttributes = $this->fileAttributes($model);
+        /** @var array<string, array{string, int}> $referencedFiles sha256 => [attribute, first version] */
+        $referencedFiles = [];
 
         if ($head === null) {
             $errors[] = $this->error(IntegrityErrorType::TruncatedChain, 'The global chain head is missing.', $subject);
@@ -412,6 +450,14 @@ class IntegrityChecker
                     $lastValid = $version->version;
                 }
 
+                foreach ($fileAttributes as $attribute) {
+                    $sha256 = $version->snapshot[$attribute] ?? null;
+
+                    if (is_string($sha256) && ! isset($referencedFiles[$sha256])) {
+                        $referencedFiles[$sha256] = [$attribute, $version->version];
+                    }
+                }
+
                 $previous = $version;
             }
         }
@@ -421,6 +467,7 @@ class IntegrityChecker
 
         $this->checkModelHead($type, $id, $previous, $subject, $errors);
         $this->checkState($model, $previous, $subject, $errors);
+        $this->checkReferencedFiles($referencedFiles, $subject, $errors);
 
         return new IntegrityResult($errors, $count, $lastValid);
     }
@@ -594,6 +641,90 @@ class IntegrityChecker
         if ($message !== null) {
             $errors[] = $this->error(IntegrityErrorType::TruncatedChain, $message, $subject, null, $last?->sequence);
         }
+    }
+
+    /**
+     * Files referenced by any version must be recorded and present on their
+     * disk with the recorded size. Contents are hashed by checkFiles() only.
+     *
+     * @param  array<string, array{string, int}>  $references  sha256 => [attribute, first version]
+     * @param  array{string|null, string|null}  $subject
+     * @param  list<IntegrityError>  $errors
+     */
+    private function checkReferencedFiles(array $references, array $subject, array &$errors): void
+    {
+        if ($references === []) {
+            return;
+        }
+
+        $files = StoredFile::query()->whereIn('sha256', array_keys($references))->get()->keyBy('sha256');
+
+        foreach ($references as $sha256 => [$attribute, $version]) {
+            $file = $files->get($sha256);
+            $where = "[{$attribute}] of version {$version} references file [{$sha256}]";
+
+            $message = $file === null
+                ? "{$where}, but there is no stored file with this hash."
+                : (($problem = $this->storedFileProblem($file, false)) === null ? null : "{$where}, which {$problem}.");
+
+            if ($message !== null) {
+                $errors[] = $this->error(IntegrityErrorType::FileMismatch, $message, $subject);
+            }
+        }
+    }
+
+    /**
+     * What is wrong with a stored file on its disk, or null if nothing is.
+     */
+    private function storedFileProblem(StoredFile $file, bool $contents): ?string
+    {
+        $disk = Storage::disk($file->disk);
+
+        if (! $disk->exists($file->path)) {
+            return "is missing on disk [{$file->disk}]";
+        }
+
+        $size = $disk->size($file->path);
+
+        if ($size !== $file->size) {
+            return "has {$size} bytes on disk, but {$file->size} were recorded";
+        }
+
+        if ($contents) {
+            $stream = $disk->readStream($file->path);
+
+            if (! is_resource($stream)) {
+                return "cannot be read from disk [{$file->disk}]";
+            }
+
+            $context = hash_init('sha256');
+            hash_update_stream($context, $stream);
+            fclose($stream);
+
+            if (! hash_equals($file->sha256, hash_final($context))) {
+                return 'has a content that does not match its hash';
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Attributes cast with AsIntegrityFile.
+     *
+     * @return list<string>
+     */
+    private function fileAttributes(Model $model): array
+    {
+        $attributes = [];
+
+        foreach ($model->getCasts() as $attribute => $cast) {
+            if (explode(':', $cast, 2)[0] === AsIntegrityFile::class) {
+                $attributes[] = $attribute;
+            }
+        }
+
+        return $attributes;
     }
 
     /**

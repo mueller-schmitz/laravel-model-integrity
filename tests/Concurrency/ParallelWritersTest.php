@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Post;
@@ -109,6 +110,28 @@ it('records the final state in deleted versions under parallel updates', functio
             ->sole();
 
         expect($version->snapshot)->toBe($before->snapshot);
+    }
+});
+
+it('stores identical files once under parallel writers', function (): void {
+    $root = sys_get_temp_dir().'/mi-files-'.uniqid();
+    putenv("MI_FILES_ROOT={$root}");
+    config(['filesystems.disks.integrity' => ['driver' => 'local', 'root' => $root], 'model-integrity.files.disk' => 'integrity']);
+
+    try {
+        // Per worker and write one unique file, plus one file shared by all.
+        $expected = 1 + WORKERS * WRITES_PER_WORKER;
+
+        expect(runWorkers('files', 0, 'files', $expected))->toBe([])
+            ->and(DB::table('integrity_files')->count())->toBe($expected)
+            ->and(DB::table('integrity_files')->where('sha256', hash('sha256', 'shared content'))->count())->toBe(1);
+
+        expectIntactChains($expected);
+
+        expect(app(IntegrityChecker::class)->checkFiles()->passes())->toBeTrue();
+    } finally {
+        putenv('MI_FILES_ROOT');
+        File::deleteDirectory($root);
     }
 });
 

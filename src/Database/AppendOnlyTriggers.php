@@ -16,7 +16,7 @@ use InvalidArgumentException;
  */
 class AppendOnlyTriggers
 {
-    private const string MESSAGE = 'Recorded versions are append-only.';
+    private const string MESSAGE = 'Integrity records are append-only.';
 
     private const string LONGEST_SUFFIX = '_append_only_truncate';
 

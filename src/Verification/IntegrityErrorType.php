@@ -26,4 +26,7 @@ enum IntegrityErrorType: string
 
     /** Versions exist whose model class is missing, untracked or recorded under a former morph class. */
     case Unverifiable = 'unverifiable';
+
+    /** A referenced or stored file is unknown, missing on its disk, or differs in size or content. */
+    case FileMismatch = 'file_mismatch';
 }

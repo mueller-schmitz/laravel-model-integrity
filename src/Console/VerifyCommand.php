@@ -18,7 +18,8 @@ class VerifyCommand extends Command
     protected $signature = 'model-integrity:verify
         {--model= : Model class or morph alias to check (default: everything)}
         {--id= : Key of a single model, requires --model}
-        {--fail-fast : Stop after the first model with violations}';
+        {--fail-fast : Stop after the first model with violations}
+        {--files : Also hash the content of every stored file (reads all files)}';
 
     protected $description = 'Verify recorded versions, the hash chains and the current model state';
 
@@ -59,6 +60,10 @@ class VerifyCommand extends Command
             }
         } else {
             $result = $checker->checkAll($failFast);
+        }
+
+        if ($this->option('files') === true && ! ($failFast && $result->fails())) {
+            $result = IntegrityResult::combine([$result, $checker->checkFiles()], $result->checkedVersions());
         }
 
         return $this->report($result);

@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use MuellerSchmitz\ModelIntegrity\Database\AppendOnlyTriggers;
+use MuellerSchmitz\ModelIntegrity\Facades\IntegrityFiles;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
 
@@ -29,6 +31,17 @@ it('rejects truncating versions on PostgreSQL', function (): void {
     DB::table('integrity_versions')->truncate();
 })->throws(QueryException::class, 'append-only')
     ->skip(fn () => DB::connection()->getDriverName() !== 'pgsql', 'TRUNCATE fires triggers only on PostgreSQL; elsewhere it is prevented by privileges');
+
+it('rejects updates and deletes of stored file records', function (): void {
+    Storage::fake('integrity');
+    config(['model-integrity.files.disk' => 'integrity']);
+    $path = tempnam(sys_get_temp_dir(), 'mi');
+    file_put_contents($path, 'protected');
+    IntegrityFiles::store($path);
+
+    expect(fn () => DB::table('integrity_files')->update(['size' => 1]))->toThrow(QueryException::class, 'append-only')
+        ->and(fn () => DB::table('integrity_files')->delete())->toThrow(QueryException::class, 'append-only');
+});
 
 it('keeps recording and verification working', function (): void {
     $this->invoice->update(['total' => '3.00']);

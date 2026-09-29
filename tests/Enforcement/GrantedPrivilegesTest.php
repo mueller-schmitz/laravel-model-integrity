@@ -6,7 +6,10 @@ use Illuminate\Database\Connection;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use MuellerSchmitz\ModelIntegrity\Database\AppendOnlyTriggers;
+use MuellerSchmitz\ModelIntegrity\Facades\IntegrityFiles;
+use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Contract;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Post;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Tag;
@@ -54,6 +57,7 @@ beforeEach(function (): void {
 
     dropRestrictedUser($this->admin);
     app(AppendOnlyTriggers::class)->uninstall($this->admin, 'integrity_versions');
+    app(AppendOnlyTriggers::class)->uninstall($this->admin, 'integrity_files');
 
     $this->admin->unprepared($this->admin->getDriverName() === 'pgsql'
         ? 'CREATE ROLE "'.RESTRICTED_USER."\" LOGIN PASSWORD '".RESTRICTED_PASSWORD."'"
@@ -67,7 +71,7 @@ beforeEach(function (): void {
         ->each(fn (string $statement) => $this->admin->unprepared($statement));
 
     // The application's own tables, as any application user has them.
-    foreach (['invoices', 'posts', 'tags', 'post_tag'] as $table) {
+    foreach (['invoices', 'posts', 'tags', 'post_tag', 'contracts'] as $table) {
         $this->admin->unprepared($this->admin->getDriverName() === 'pgsql'
             ? "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE \"{$table}\" TO \"".RESTRICTED_USER.'"'
             : "GRANT SELECT, INSERT, UPDATE, DELETE ON `{$this->admin->getDatabaseName()}`.`{$table}` TO '".RESTRICTED_USER."'@'%'");
@@ -125,6 +129,22 @@ it('lets the application record, delete and verify through the package API', fun
     expect($this->restricted->table('integrity_versions')->count())->toBe(5)
         ->and($this->restricted->table('integrity_heads')->count())->toBe(3)
         ->and(app(IntegrityChecker::class)->checkAll()->errors()->map(fn ($e) => (string) $e)->all())->toBe([]);
+});
+
+it('lets the application store and reference files', function (): void {
+    config(['model-integrity.connection' => 'mi_restricted']);
+    Storage::fake('integrity');
+    config(['model-integrity.files.disk' => 'integrity']);
+    $path = tempnam(sys_get_temp_dir(), 'mi');
+    file_put_contents($path, 'restricted upload');
+
+    $file = IntegrityFiles::store($path);
+    Contract::on('mi_restricted')->create(['title' => 'Lease', 'document' => $file]);
+
+    expect($this->restricted->table('integrity_files')->count())->toBe(1)
+        ->and(app(IntegrityChecker::class)->checkAll()->errors()->map(fn ($e) => (string) $e)->all())->toBe([])
+        ->and(fn () => $this->restricted->table('integrity_files')->update(['size' => 1]))
+        ->toThrow(QueryException::class, $this->restricted->getDriverName() === 'pgsql' ? 'permission denied' : 'denied');
 });
 
 it('allows reading and appending versions', function (): void {
