@@ -24,14 +24,19 @@ it('grants append-only privileges on MySQL and MariaDB', function (string $drive
     expect(implode("\n", $lines))->toContain('database-wide');
 })->with(['mysql', 'mariadb']);
 
-it('grants append-only privileges on stored file records', function (): void {
-    $mysql = sqlOnly($this->grants->build('mysql', 'app', '%', 'shop', 'integrity_versions', 'integrity_heads', filesTable: 'integrity_files'));
-    $pgsql = sqlOnly($this->grants->build('pgsql', 'app', '%', 'shop', 'integrity_versions', 'integrity_heads', filesTable: 'integrity_files'));
+it('grants append-only privileges on further append-only tables', function (): void {
+    $tables = ['integrity_files', 'integrity_anchors', 'integrity_anchor_proofs'];
+    $mysql = sqlOnly($this->grants->build('mysql', 'app', '%', 'shop', 'integrity_versions', 'integrity_heads', appendOnlyTables: $tables));
+    $pgsql = sqlOnly($this->grants->build('pgsql', 'app', '%', 'shop', 'integrity_versions', 'integrity_heads', appendOnlyTables: $tables));
 
-    expect($mysql)->toContain("GRANT SELECT, INSERT ON `shop`.`integrity_files` TO 'app'@'%';")
-        ->and($pgsql)->toContain('REVOKE ALL ON TABLE "integrity_files" FROM "app";')
-        ->toContain('GRANT SELECT, INSERT ON TABLE "integrity_files" TO "app";')
-        ->toContain('GRANT USAGE ON SEQUENCE "integrity_files_id_seq" TO "app";');
+    foreach ($tables as $table) {
+        expect($mysql)->toContain("GRANT SELECT, INSERT ON `shop`.`{$table}` TO 'app'@'%';")
+            ->and($pgsql)->toContain("REVOKE ALL ON TABLE \"{$table}\" FROM \"app\";")
+            ->toContain("GRANT SELECT, INSERT ON TABLE \"{$table}\" TO \"app\";")
+            ->toContain("GRANT USAGE ON SEQUENCE \"{$table}_id_seq\" TO \"app\";");
+    }
+
+    expect(implode("\n", $mysql))->not->toContain('UPDATE ON `shop`.`integrity_anchors`');
 });
 
 it('replaces database-wide privileges by table privileges on MySQL', function (): void {

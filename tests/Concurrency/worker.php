@@ -13,9 +13,11 @@ declare(strict_types=1);
  * - models:    creates and updates an own invoice, updates a shared invoice
  * - relations: attaches tags to a shared post and records the relation;
  *              this changes no row of the post itself
+ * - anchor:    runs model-integrity:anchor <writes> times on the anchor disk
  */
 
 use Illuminate\Support\Facades\DB;
+use MuellerSchmitz\ModelIntegrity\Anchoring\Anchorer;
 use MuellerSchmitz\ModelIntegrity\Facades\IntegrityFiles;
 use MuellerSchmitz\ModelIntegrity\ModelIntegrityServiceProvider;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
@@ -36,6 +38,8 @@ $app['config']->set('database.default', getenv('DB_CONNECTION') ?: 'sqlite');
 $app['config']->set('app.key', 'base64:'.base64_encode(str_repeat('k', 32)));
 $app['config']->set('filesystems.disks.integrity', ['driver' => 'local', 'root' => getenv('MI_FILES_ROOT') ?: sys_get_temp_dir().'/mi-files']);
 $app['config']->set('model-integrity.files.disk', 'integrity');
+$app['config']->set('filesystems.disks.anchors', ['driver' => 'local', 'root' => getenv('MI_ANCHORS_ROOT') ?: sys_get_temp_dir().'/mi-anchors']);
+$app['config']->set('model-integrity.anchors', ['drivers' => ['disk'], 'disk' => ['disk' => 'anchors', 'path' => 'statements']]);
 
 try {
     if ($mode === 'models') {
@@ -46,6 +50,11 @@ try {
 
             // All workers change the same model and compete for its next version.
             Invoice::query()->findOrFail((int) $sharedId)->update(['note' => "worker {$worker} write {$i}"]);
+        }
+    } elseif ($mode === 'anchor') {
+        for ($i = 1; $i <= (int) $writes; $i++) {
+            app(Anchorer::class)->anchor();
+            usleep(random_int(0, 20_000));
         }
     } elseif ($mode === 'store-one') {
         // Stores the content given as the last argument once.

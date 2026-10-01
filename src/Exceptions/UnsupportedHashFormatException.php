@@ -13,4 +13,9 @@ class UnsupportedHashFormatException extends InvalidArgumentException
         // json_encode distinguishes 1 from "1" and fails only for values that are no valid format anyway.
         return new self('Unsupported hash format ['.(json_encode($format) ?: get_debug_type($format)).'].');
     }
+
+    public static function anchor(mixed $format): self
+    {
+        return new self('Unsupported anchor format ['.(json_encode($format) ?: get_debug_type($format)).'].');
+    }
 }

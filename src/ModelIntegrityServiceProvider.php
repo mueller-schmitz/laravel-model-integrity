@@ -9,6 +9,8 @@ use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
+use MuellerSchmitz\ModelIntegrity\Anchoring\AnchorManager;
+use MuellerSchmitz\ModelIntegrity\Console\AnchorCommand;
 use MuellerSchmitz\ModelIntegrity\Console\GrantsCommand;
 use MuellerSchmitz\ModelIntegrity\Console\InstallCommand;
 use MuellerSchmitz\ModelIntegrity\Console\SnapshotCommand;
@@ -34,6 +36,7 @@ class ModelIntegrityServiceProvider extends ServiceProvider
         $this->app->scoped(ActorResolver::class);
         $this->app->singleton(IntegrityChecker::class);
         $this->app->singleton(FileStore::class);
+        $this->app->singleton(AnchorManager::class);
     }
 
     public function boot(): void
@@ -51,6 +54,7 @@ class ModelIntegrityServiceProvider extends ServiceProvider
         }
 
         $this->commands([
+            AnchorCommand::class,
             GrantsCommand::class,
             InstallCommand::class,
             SnapshotCommand::class,

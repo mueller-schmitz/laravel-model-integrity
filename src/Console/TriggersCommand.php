@@ -32,9 +32,14 @@ class TriggersCommand extends Command
             return self::SUCCESS;
         }
 
-        // Append-only tables that exist yet; integrity_files arrives with its own migration.
+        // Append-only tables that exist yet; later tables arrive with their own migrations.
         $tables = array_filter(
-            [Config::string('model-integrity.tables.versions'), Config::string('model-integrity.tables.files', 'integrity_files')],
+            [
+                Config::string('model-integrity.tables.versions'),
+                Config::string('model-integrity.tables.files', 'integrity_files'),
+                Config::string('model-integrity.tables.anchors', 'integrity_anchors'),
+                Config::string('model-integrity.tables.anchor_proofs', 'integrity_anchor_proofs'),
+            ],
             fn (string $table): bool => $connection->getSchemaBuilder()->hasTable($table),
         );
 

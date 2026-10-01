@@ -14,6 +14,9 @@ final class ChainName
 {
     public const string GLOBAL = 'global';
 
+    /** Not a chain of versions: the head of the anchors (last anchored sequence and digest). */
+    public const string ANCHORS = 'anchors';
+
     /** Length of the `chain` column. */
     private const int MAX_LENGTH = 191;
 

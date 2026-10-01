@@ -47,8 +47,27 @@ it('covers the stored files table as well', function (): void {
     expect(fn () => DB::table('integrity_files')->update(['size' => 3]))->toThrow(QueryException::class, 'append-only');
 });
 
+it('covers the anchor tables as well', function (): void {
+    $this->artisan('model-integrity:triggers', ['--remove' => true])
+        ->expectsOutputToContain('integrity_anchor_proofs')
+        ->assertExitCode(0);
+    DB::table('integrity_anchors')->insert(['anchor_format' => 1, 'from_sequence' => 1, 'to_sequence' => 1, 'merkle_root' => str_repeat('a', 64), 'digest' => str_repeat('b', 64), 'created_at' => '2026-10-01 10:00:00']);
+    DB::table('integrity_anchors')->update(['to_sequence' => 2]);
+
+    $this->artisan('model-integrity:triggers')
+        ->expectsOutputToContain('integrity_anchors')
+        ->assertExitCode(0);
+
+    expect(fn () => DB::table('integrity_anchors')->update(['to_sequence' => 3]))->toThrow(QueryException::class, 'append-only');
+});
+
 it('fails when no integrity table exists yet', function (): void {
-    config(['model-integrity.tables.versions' => 'missing_versions', 'model-integrity.tables.files' => 'missing_files']);
+    config([
+        'model-integrity.tables.versions' => 'missing_versions',
+        'model-integrity.tables.files' => 'missing_files',
+        'model-integrity.tables.anchors' => 'missing_anchors',
+        'model-integrity.tables.anchor_proofs' => 'missing_anchor_proofs',
+    ]);
 
     $this->artisan('model-integrity:triggers')
         ->expectsOutputToContain('migrate')

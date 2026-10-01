@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Support\ServiceProvider;
+use MuellerSchmitz\ModelIntegrity\Anchoring\AnchorManager;
 use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
 use MuellerSchmitz\ModelIntegrity\ModelIntegrityServiceProvider;
@@ -13,13 +14,15 @@ it('registers the service provider', function (): void {
 
 it('registers the hashing services as singletons', function (string $class): void {
     expect(app($class))->toBeInstanceOf($class)->toBe(app($class));
-})->with([CanonicalSerializer::class, Hasher::class]);
+})->with([CanonicalSerializer::class, Hasher::class, AnchorManager::class]);
 
 it('merges the package config', function (): void {
     expect(config('model-integrity.tables'))->toBe([
         'versions' => 'integrity_versions',
         'heads' => 'integrity_heads',
         'files' => 'integrity_files',
+        'anchors' => 'integrity_anchors',
+        'anchor_proofs' => 'integrity_anchor_proofs',
     ])
         ->and(config('model-integrity.files'))->toBe(['disk' => 'local', 'path' => 'integrity-files'])
         ->and(config('model-integrity.defaults'))->toBe([
@@ -56,5 +59,7 @@ it('publishes the migrations under its tag in dependency order', function (): vo
             'create_integrity_append_only_triggers.php',
             'create_integrity_files_table.php',
             'create_integrity_files_append_only_triggers.php',
+            'create_integrity_anchors_tables.php',
+            'create_integrity_anchors_append_only_triggers.php',
         ]);
 });
