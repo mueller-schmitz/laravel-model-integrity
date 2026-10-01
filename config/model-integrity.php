@@ -97,9 +97,14 @@ return [
             'esplora_url' => env('MODEL_INTEGRITY_ESPLORA_URL', 'https://blockstream.info/api'),
         ],
 
-        // A proof attested (or still pending) later than this after its anchor
-        // was created proves nothing about the time of the anchor.
+        // A proof attested (or still pending) later than this after the
+        // versions it attests were recorded proves nothing about their time.
         'max_delay_hours' => 72,
+
+        // When anchoring was enabled (e.g. "2026-10-01"). Versions recorded
+        // before count from this date: set it when upgrading an application
+        // that already has versions.
+        'since' => env('MODEL_INTEGRITY_ANCHORS_SINCE'),
     ],
 
     /*

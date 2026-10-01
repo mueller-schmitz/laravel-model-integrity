@@ -67,6 +67,7 @@ class EsploraClient
 
         $response = $this->http
             ->withHeaders(['User-Agent' => 'mueller-schmitz/laravel-model-integrity'])
+            ->connectTimeout(Config::integer('model-integrity.anchors.opentimestamps.timeout', 10))
             ->timeout(Config::integer('model-integrity.anchors.opentimestamps.timeout', 10))
             ->get(rtrim($base, '/').'/'.$path);
 

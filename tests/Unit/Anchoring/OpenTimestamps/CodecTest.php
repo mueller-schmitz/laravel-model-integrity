@@ -15,6 +15,7 @@ beforeEach(function (): void {
     $this->digest = hash_file('sha256', $this->fixtures.'/fixture.txt', true);
 });
 
+const BITCOIN_ONE = '000588960d73d719010101'; // Bitcoin attestation, height 1
 const PENDING_EXAMPLE = '0083dfe30d2ef90c8e141368747470733a2f2f6578616d706c652e636f6d'; // pending "https://example.com"
 
 it('decodes and re-encodes real calendar responses byte for byte', function (string $file, string $uri): void {
@@ -116,12 +117,12 @@ it('rejects malformed timestamps', function (string $hex): void {
 ])->throws(InvalidTimestampException::class);
 
 it('rejects too deeply nested timestamps', function (): void {
-    (new Codec)->decodeTimestamp((string) hex2bin(str_repeat('08', 300).'000588960d73d7190101'), str_repeat("\x00", 32));
+    (new Codec)->decodeTimestamp((string) hex2bin(str_repeat('08', 300).BITCOIN_ONE), str_repeat("\x00", 32));
 })->throws(InvalidTimestampException::class, 'deep');
 
 it('rejects messages that grow beyond the limit', function (): void {
     $append = 'f0'.'a01f'.str_repeat('aa', 4000); // varuint 4000
-    (new Codec)->decodeTimestamp((string) hex2bin($append.$append.'000588960d73d7190101'), str_repeat("\x00", 32));
+    (new Codec)->decodeTimestamp((string) hex2bin($append.$append.BITCOIN_ONE), str_repeat("\x00", 32));
 })->throws(InvalidTimestampException::class);
 
 it('rejects detached files with a wrong header, version or hash op', function (string $hex): void {
@@ -131,3 +132,39 @@ it('rejects detached files with a wrong header, version or hash op', function (s
     'version' => ['004f70656e54696d657374616d7073000050726f6f6600bf89e2e884e89294'.'0208'],
     'hash op' => ['004f70656e54696d657374616d7073000050726f6f6600bf89e2e884e89294'.'0102'],
 ])->throws(InvalidTimestampException::class);
+
+it('rejects proofs larger than any real proof', function (): void {
+    (new Codec)->decodeTimestamp(str_repeat("\x00", Codec::MAX_SIZE + 1), str_repeat("\x00", 32));
+})->throws(InvalidTimestampException::class, 'larger');
+
+/**
+ * A node with the given number of forks, each an append with its own argument
+ * followed by an attestation.
+ */
+function forks(int $count): string
+{
+    $hex = '';
+
+    for ($i = 0; $i < $count; $i++) {
+        $hex .= 'ff'.'f002'.sprintf('%04x', $i).BITCOIN_ONE;
+    }
+
+    return $hex.BITCOIN_ONE;
+}
+
+it('rejects proofs whose nodes hold too many bytes in total', function (): void {
+    // One append to 4000 bytes, then thousands of forks: each node keeps a 4 KB message.
+    $hex = 'f0'.'a01f'.str_repeat('aa', 4000).forks(1000);
+
+    (new Codec)->decodeTimestamp((string) hex2bin($hex), str_repeat("\x00", 32));
+})->throws(InvalidTimestampException::class, 'too many');
+
+it('reads a deep and wide proof in linear time', function (): void {
+    $hex = str_repeat('f2', 250).forks(2000);
+    $started = microtime(true);
+
+    $timestamp = (new Codec)->decodeTimestamp((string) hex2bin($hex), str_repeat("\x00", 32));
+
+    expect(count($timestamp->allAttestations()))->toBe(2001)
+        ->and(microtime(true) - $started)->toBeLessThan(2.0);
+});

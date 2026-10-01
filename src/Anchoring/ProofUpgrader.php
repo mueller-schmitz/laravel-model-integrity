@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use MuellerSchmitz\ModelIntegrity\Anchoring\Contracts\UpgradesProofs;
+use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
 use MuellerSchmitz\ModelIntegrity\Models\AnchorProof;
 use MuellerSchmitz\ModelIntegrity\Models\AnchorRecord;
 use Throwable;
@@ -39,7 +40,7 @@ class ProofUpgrader
             foreach ($latest as $name => $proof) {
                 try {
                     $driver = $this->drivers->driver($name);
-                } catch (InvalidArgumentException) {
+                } catch (InvalidArgumentException|IntegrityConfigurationException) {
                     continue;
                 }
 

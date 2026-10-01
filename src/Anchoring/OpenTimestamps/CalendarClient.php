@@ -52,6 +52,7 @@ class CalendarClient
     {
         return $this->http
             ->withHeaders(['Accept' => 'application/vnd.opentimestamps.v1', 'User-Agent' => 'mueller-schmitz/laravel-model-integrity'])
+            ->connectTimeout(Config::integer('model-integrity.anchors.opentimestamps.timeout', 10))
             ->timeout(Config::integer('model-integrity.anchors.opentimestamps.timeout', 10))
             ->withoutRedirecting();
     }

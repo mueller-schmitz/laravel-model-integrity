@@ -15,6 +15,7 @@ use MuellerSchmitz\ModelIntegrity\Anchoring\OpenTimestamps\Codec;
 use MuellerSchmitz\ModelIntegrity\Anchoring\OpenTimestamps\DetachedTimestamp;
 use MuellerSchmitz\ModelIntegrity\Anchoring\OpenTimestamps\EsploraClient;
 use MuellerSchmitz\ModelIntegrity\Anchoring\OpenTimestamps\Timestamp;
+use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\InvalidTimestampException;
 use RuntimeException;
 use Throwable;
@@ -44,6 +45,10 @@ class OpenTimestampsAnchor implements Anchor, ExportsProofs, UpgradesProofs
 
     public function submit(AnchorStatement $statement): string
     {
+        if ($this->calendars === [] || $this->minCalendars > count($this->calendars)) {
+            throw IntegrityConfigurationException::invalidConfig('model-integrity.anchors.opentimestamps.calendars', 'a list of at least min_calendars ('.max(1, $this->minCalendars).') calendar URLs');
+        }
+
         $digest = (string) hex2bin($statement->digest());
         $timestamp = new Timestamp($digest);
         $answered = 0;
@@ -124,10 +129,25 @@ class OpenTimestampsAnchor implements Anchor, ExportsProofs, UpgradesProofs
 
         $upgraded = $this->codec->decodeDetached($proof)->timestamp;
 
+        $failures = [];
+
         foreach ($attestations as [$attestation, $commitment]) {
             $calendar = $this->configuredCalendar($attestation);
 
-            if ($calendar === null || ($upgrade = $this->client->upgrade($calendar, $commitment)) === null) {
+            if ($calendar === null) {
+                continue;
+            }
+
+            // One unreachable calendar must not hold back what the others completed.
+            try {
+                $upgrade = $this->client->upgrade($calendar, $commitment);
+            } catch (Throwable $e) {
+                $failures[] = "[{$calendar}] {$e->getMessage()}";
+
+                continue;
+            }
+
+            if ($upgrade === null) {
                 continue;
             }
 
@@ -138,6 +158,10 @@ class OpenTimestampsAnchor implements Anchor, ExportsProofs, UpgradesProofs
 
         // Only additions: the previous proof stays part of the upgraded one.
         if (! $upgraded->contains($file->timestamp) || $file->timestamp->contains($upgraded)) {
+            if ($failures !== []) {
+                throw new RuntimeException('No calendar completed the proof: '.implode('; ', $failures));
+            }
+
             return null;
         }
 

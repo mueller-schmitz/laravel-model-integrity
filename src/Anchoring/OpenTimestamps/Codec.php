@@ -24,7 +24,17 @@ final class Codec
     /** Deepest nesting of operations read; proofs of public calendars need far less. */
     public const int MAX_DEPTH = 256;
 
-    public const int MAX_SIZE = 1_048_576;
+    /** Real proofs, even upgraded ones from several calendars, have a few kilobytes. */
+    public const int MAX_SIZE = 65_536;
+
+    /** Limits what a proof can make the reader hold: nodes, and message bytes in all nodes. */
+    public const int MAX_NODES = 10_000;
+
+    public const int MAX_MESSAGE_BYTES = 2_097_152;
+
+    private int $nodes = 0;
+
+    private int $messageBytes = 0;
 
     private const int FORK = 0xFF;
 
@@ -34,7 +44,8 @@ final class Codec
     {
         $this->assertSize($bytes);
         $reader = new ByteReader($bytes);
-        $timestamp = $this->readTimestamp($reader, $message, 0);
+        $timestamp = new Timestamp($message);
+        $this->readInto($reader, $timestamp, 0);
         $reader->assertEnd();
 
         return $timestamp;
@@ -72,7 +83,8 @@ final class Codec
         }
 
         $digest = $reader->bytes(32);
-        $timestamp = $this->readTimestamp($reader, $digest, 0);
+        $timestamp = new Timestamp($digest);
+        $this->readInto($reader, $timestamp, 0);
         $reader->assertEnd();
 
         return new DetachedTimestamp($digest, $timestamp);
@@ -83,13 +95,25 @@ final class Codec
         return self::MAGIC.Bytes::varuint(self::MAJOR_VERSION).chr(Op::SHA256).$file->digest.$this->encodeTimestamp($file->timestamp);
     }
 
-    private function readTimestamp(ByteReader $reader, string $message, int $depth): Timestamp
+    /**
+     * Reads the entries of a node into it. Nodes are read in place, so every
+     * node is created once, whatever the depth.
+     */
+    private function readInto(ByteReader $reader, Timestamp $timestamp, int $depth): void
     {
         if ($depth > self::MAX_DEPTH) {
             throw new InvalidTimestampException('The timestamp is nested too deep.');
         }
 
-        $timestamp = new Timestamp($message);
+        if ($depth === 0) {
+            $this->nodes = 0;
+            $this->messageBytes = 0;
+        }
+
+        if (++$this->nodes > self::MAX_NODES || ($this->messageBytes += strlen($timestamp->message)) > self::MAX_MESSAGE_BYTES) {
+            throw new InvalidTimestampException('The timestamp has too many nodes or message bytes.');
+        }
+
         $tag = $reader->byte();
 
         while ($tag === self::FORK) {
@@ -98,8 +122,6 @@ final class Codec
         }
 
         $this->readEntry($reader, $timestamp, $tag, $depth);
-
-        return $timestamp;
     }
 
     private function readEntry(ByteReader $reader, Timestamp $timestamp, int $tag, int $depth): void
@@ -112,9 +134,8 @@ final class Codec
         }
 
         $op = Op::fromTag($tag, in_array($tag, [Op::APPEND, Op::PREPEND], true) ? $reader->varbytes(Op::MAX_MESSAGE_LENGTH) : null);
-        $next = $this->readTimestamp($reader, $op->apply($timestamp->message), $depth + 1);
 
-        $timestamp->add($op)->merge($next);
+        $this->readInto($reader, $timestamp->add($op), $depth + 1);
     }
 
     private function encodeOp(Op $op): string

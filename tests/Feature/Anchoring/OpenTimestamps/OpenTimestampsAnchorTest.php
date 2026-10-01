@@ -33,7 +33,6 @@ it('rejects calendars that are no https URLs', function (array $calendars): void
 
     app(AnchorManager::class)->driver('opentimestamps');
 })->with([
-    'none' => [[]],
     'plain http' => [['http://alice.example']],
 ])->throws(IntegrityConfigurationException::class);
 
@@ -148,3 +147,38 @@ it('does not ask the calendars again once a proof has a Bitcoin attestation', fu
     expect($this->driver->upgrade($this->statement, $upgraded))->toBeNull()
         ->and(count(Http::recorded()))->toBe($requests);
 });
+
+it('keeps the upgrade of one calendar when another one fails', function (): void {
+    $proof = $this->driver->submit($this->statement);
+    Ots::confirm(Ots::ALICE, $this->digest, 900000, '2026-10-01 12:00:00');
+    Ots::$failing = [Ots::BOB];
+
+    $upgraded = $this->driver->upgrade($this->statement, $proof);
+
+    expect($upgraded)->not->toBeNull()
+        ->and($this->driver->verify($this->statement, (string) $upgraded)->status)->toBe(AnchorStatus::Confirmed);
+});
+
+it('fails the upgrade when calendars fail and none had anything new', function (): void {
+    $proof = $this->driver->submit($this->statement);
+    Ots::$failing = [Ots::BOB];
+
+    $this->driver->upgrade($this->statement, $proof);
+})->throws(RuntimeException::class, 'bob.example');
+
+it('verifies without calendars, but cannot submit', function (): void {
+    $proof = $this->driver->submit($this->statement);
+    config(['model-integrity.anchors.opentimestamps.calendars' => []]);
+    app(AnchorManager::class)->forgetDrivers();
+    $driver = app(AnchorManager::class)->driver('opentimestamps');
+
+    expect($driver->verify($this->statement, $proof)->status)->toBe(AnchorStatus::Pending)
+        ->and(fn () => $driver->submit($this->statement))->toThrow(IntegrityConfigurationException::class);
+});
+
+it('rejects more required calendars than configured', function (): void {
+    config(['model-integrity.anchors.opentimestamps.min_calendars' => 3]);
+    app(AnchorManager::class)->forgetDrivers();
+
+    app(AnchorManager::class)->driver('opentimestamps')->submit($this->statement);
+})->throws(IntegrityConfigurationException::class, 'min_calendars (3)');

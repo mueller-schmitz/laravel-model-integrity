@@ -62,10 +62,7 @@ class AnchorManager extends Manager
             $calendars[] = $calendar;
         }
 
-        if ($calendars === []) {
-            throw IntegrityConfigurationException::invalidConfig('model-integrity.anchors.opentimestamps.calendars', 'a list of https:// calendar URLs');
-        }
-
+        // No calendars is valid: existing proofs can still be verified.
         return new OpenTimestampsAnchor(
             $this->container->make(CalendarClient::class),
             $this->container->make(Codec::class),

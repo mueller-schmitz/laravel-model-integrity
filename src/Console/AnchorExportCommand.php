@@ -9,6 +9,7 @@ use Illuminate\Filesystem\Filesystem;
 use InvalidArgumentException;
 use MuellerSchmitz\ModelIntegrity\Anchoring\AnchorManager;
 use MuellerSchmitz\ModelIntegrity\Anchoring\Contracts\ExportsProofs;
+use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
 use MuellerSchmitz\ModelIntegrity\Models\AnchorProof;
 use MuellerSchmitz\ModelIntegrity\Models\AnchorRecord;
 
@@ -43,7 +44,7 @@ class AnchorExportCommand extends Command
         foreach ($latest as $name => $proof) {
             try {
                 $driver = $drivers->driver($name);
-            } catch (InvalidArgumentException) {
+            } catch (InvalidArgumentException|IntegrityConfigurationException) {
                 continue;
             }
 

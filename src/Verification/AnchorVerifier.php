@@ -15,6 +15,7 @@ use MuellerSchmitz\ModelIntegrity\Anchoring\AnchorVerification;
 use MuellerSchmitz\ModelIntegrity\Anchoring\Contracts\ListsStatements;
 use MuellerSchmitz\ModelIntegrity\Anchoring\MerkleTree;
 use MuellerSchmitz\ModelIntegrity\Anchoring\VersionHashes;
+use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
 use MuellerSchmitz\ModelIntegrity\Models\AnchorProof;
 use MuellerSchmitz\ModelIntegrity\Models\AnchorRecord;
 use MuellerSchmitz\ModelIntegrity\Recording\ChainName;
@@ -155,7 +156,7 @@ class AnchorVerifier
         foreach ($latest as $driver => $proof) {
             try {
                 $anchorDriver = $this->drivers->driver($driver);
-            } catch (InvalidArgumentException) {
+            } catch (InvalidArgumentException|IntegrityConfigurationException) {
                 $problems[] = [IntegrityErrorType::Unverifiable, "The [{$driver}] proof of anchor #{$anchor->id} was not checked: the driver is not available."];
 
                 continue;
@@ -188,28 +189,56 @@ class AnchorVerifier
     }
 
     /**
-     * A proof attests when the statement existed. One obtained long after the
-     * anchor was created proves nothing about the time of the anchor: it may
-     * be a fresh proof for a statement forged afterwards.
+     * A proof attests when the statement existed. It says nothing about the
+     * time between recording a version and that attestation, so a proof
+     * obtained long after the versions it attests may be a fresh proof for a
+     * statement forged afterwards. The delay is measured from the versions'
+     * own times, which are hashed and anchored; the anchor row's time is not
+     * covered by any hash. Versions recorded before anchoring was enabled
+     * (anchors.since, outside the database) count from that date.
      */
     private function lateProof(AnchorRecord $anchor, AnchorVerification $verification): ?string
     {
-        if ($anchor->created_at === null) {
+        $recorded = $this->versions->latestCreatedAt($anchor->from_sequence, $anchor->to_sequence);
+
+        if ($recorded === null) {
             return null;
         }
 
+        $since = $this->anchoringSince();
+        $from = $since !== null && $since->greaterThan($recorded) ? $since : $recorded;
         $hours = Config::integer('model-integrity.anchors.max_delay_hours', 72);
-        $deadline = $anchor->created_at->addHours($hours);
+        $deadline = $from->addHours($hours);
+        $reference = $from === $since ? "anchoring was enabled ({$since->toIso8601String()})" : "the versions it attests were recorded (last at {$recorded->toIso8601String()})";
 
         if ($verification->status === AnchorStatus::Confirmed && $verification->attestedAt?->greaterThan($deadline)) {
-            return "was attested at {$verification->attestedAt->toIso8601String()}, more than {$hours} hours after the anchor was created ({$anchor->created_at->toIso8601String()}).";
+            return "was attested at {$verification->attestedAt->toIso8601String()}, more than {$hours} hours after {$reference}.";
         }
 
         if ($verification->status === AnchorStatus::Pending && CarbonImmutable::now()->greaterThan($deadline)) {
-            return "is still pending more than {$hours} hours after the anchor was created; run model-integrity:anchor-upgrade.";
+            return "is still pending more than {$hours} hours after {$reference}; run model-integrity:anchor-upgrade.";
         }
 
         return null;
+    }
+
+    private function anchoringSince(): ?CarbonImmutable
+    {
+        $since = config('model-integrity.anchors.since');
+
+        if ($since === null || $since === '') {
+            return null;
+        }
+
+        if (! is_string($since)) {
+            throw IntegrityConfigurationException::invalidConfig('model-integrity.anchors.since', 'a date or null');
+        }
+
+        try {
+            return new CarbonImmutable($since, 'UTC');
+        } catch (Throwable) {
+            throw IntegrityConfigurationException::invalidConfig('model-integrity.anchors.since', 'a date or null');
+        }
     }
 
     /**

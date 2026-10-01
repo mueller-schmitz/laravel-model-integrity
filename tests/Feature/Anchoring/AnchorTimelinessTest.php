@@ -81,3 +81,24 @@ it('rejects versions recorded after the anchor that attests them', function (): 
 
     expect(implode("\n", timelinessMessages()))->toContain('recorded after');
 });
+
+it('measures the delay from the attested versions, not from the unhashed anchor row', function (): void {
+    // Versions recorded in January, anchored and attested in October: the
+    // anchor row's own time would hide that, as an attacker can set it freely.
+    DB::table('integrity_versions')->update(['created_at' => '2026-01-01 00:00:00.000000']);
+    TimedAnchor::$attestedAt = CarbonImmutable::parse('2026-10-01 12:30:00');
+
+    expect(implode('
+', timelinessMessages()))->toContain('after the versions it attests');
+});
+
+it('accepts versions recorded before anchoring was enabled, if anchored right then', function (string $attestedAt, bool $passes): void {
+    config(['model-integrity.anchors.since' => '2026-10-01 00:00:00']);
+    DB::table('integrity_versions')->update(['created_at' => '2026-01-01 00:00:00.000000']);
+    TimedAnchor::$attestedAt = CarbonImmutable::parse($attestedAt);
+
+    expect(timelinessMessages() === [])->toBe($passes);
+})->with([
+    'anchored when enabled' => ['2026-10-01 12:30:00', true],
+    'anchored months later' => ['2026-12-01 12:00:00', false],
+]);
