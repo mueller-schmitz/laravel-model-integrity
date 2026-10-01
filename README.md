@@ -7,7 +7,7 @@
 
 Immutable and versioned Eloquent models with a gapless, cryptographically verifiable history.
 
-> **Status:** before 1.0 – the API may still change in minor versions. RFC 3161 anchors, crypto-shredding and an auditor export are planned.
+> **Status:** before 1.0 – the API may still change in minor versions. Crypto-shredding and an auditor export are planned.
 
 ## Scope
 
@@ -394,6 +394,32 @@ ots verify ./audit/00000000000000001234-<digest>.json.ots
 ```
 
 `model-integrity:anchor-export` writes the statement of an anchor and its proof files. The statement file's SHA-256 hash is the anchored digest, so the standard `ots` client verifies it against your own Bitcoin node. Recompute the Merkle root from the version hashes (see [Anchor format](#anchor-format)) to tie the statement to the versions.
+
+### RFC 3161 driver
+
+```php
+// config/model-integrity.php
+'anchors' => [
+    'drivers' => ['disk', 'opentimestamps', 'rfc3161'],
+    'rfc3161' => [
+        'url' => env('MODEL_INTEGRITY_TSA_URL'),            // e.g. https://freetsa.org/tsr
+        'ca_file' => env('MODEL_INTEGRITY_TSA_CA_FILE'),    // PEM file with the TSA's CA certificates
+        'intermediates_file' => null,
+        'policy' => null,                                   // require a TSA policy OID
+        'timeout' => 10,
+        'headers' => [],                                    // e.g. credentials of a commercial TSA
+    ],
+],
+```
+
+A time-stamp authority (TSA) signs that the statement's digest existed at a time. [freetsa.org](https://freetsa.org) is free; a qualified trust service provider under eIDAS gives the time-stamp legal weight in the EU. The time-stamp is there at once, no upgrade needed. The driver needs the PHP extension `openssl`.
+
+The proof is the TSA's complete response. Verification checks the signature over the time-stamp, that it is for the statement's digest (and, if configured, under the required policy), and that the TSA certificate is meant for time stamping and leads to a certificate in `ca_file` – valid at the time of the time-stamp, so proofs stay verifiable after the TSA certificate expired. Revocation (CRL, OCSP) is not checked. The time of the time-stamp is subject to the same checks as Bitcoin attestations (see [What the time proves](#what-the-time-proves)). A missing CA file or extension is reported as `Unverifiable`.
+
+```bash
+php artisan model-integrity:anchor-export 42 ./audit
+openssl ts -verify -in ./audit/<file>.json.tsr -data ./audit/<file>.json -CAfile tsa-ca.pem
+```
 
 ### Restoring a backup
 

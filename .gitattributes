@@ -11,3 +11,5 @@
 /phpunit.xml.dist   export-ignore
 /phpstan.neon.dist  export-ignore
 /pint.json          export-ignore
+*.tsr binary
+*.tsq binary

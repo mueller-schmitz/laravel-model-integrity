@@ -39,6 +39,9 @@
         "pestphp/pest-plugin-laravel": "^4.0 || ^5.0",
         "symfony/process": "^7.0"
     },
+    "suggest": {
+        "ext-openssl": "Needed by the RFC 3161 anchor driver to check time-stamp tokens"
+    },
     "autoload": {
         "psr-4": {
             "MuellerSchmitz\\ModelIntegrity\\": "src/"
