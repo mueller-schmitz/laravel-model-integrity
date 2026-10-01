@@ -56,8 +56,8 @@ class DiskAnchor implements Anchor, ListsStatements
         // The name is derived from the statement; a file with another name and
         // the same content (e.g. uploaded through the application) is no proof.
         // The directory may differ: it is the path configured at the time.
-        if (basename($proof) !== $this->nameFor($statement)) {
-            return AnchorVerification::invalid("Anchor file [{$proof}] is not the file of this statement [{$this->nameFor($statement)}].");
+        if (basename($proof) !== $statement->fileName()) {
+            return AnchorVerification::invalid("Anchor file [{$proof}] is not the file of this statement [{$statement->fileName()}].");
         }
 
         if (! $disk->exists($proof)) {
@@ -92,13 +92,7 @@ class DiskAnchor implements Anchor, ListsStatements
 
     private function pathFor(AnchorStatement $statement): string
     {
-        return ($this->prefix() === '' ? '' : $this->prefix().'/').$this->nameFor($statement);
-    }
-
-    private function nameFor(AnchorStatement $statement): string
-    {
-        // Zero-padded, so file names sort in sequence order.
-        return sprintf('%020d-%s.json', $statement->toSequence, $statement->digest());
+        return ($this->prefix() === '' ? '' : $this->prefix().'/').$statement->fileName();
     }
 
     private function prefix(): string

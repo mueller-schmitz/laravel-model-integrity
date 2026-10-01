@@ -81,6 +81,30 @@ return [
             'disk' => env('MODEL_INTEGRITY_ANCHOR_DISK', 'local'),
             'path' => 'integrity-anchors',
         ],
+
+        // Free, no account: public calendars commit to Bitcoin within hours.
+        // Bitcoin attestations are checked against block headers from an
+        // Esplora API; point esplora_url to your own node to rely on no one.
+        'opentimestamps' => [
+            'calendars' => [
+                'https://alice.btc.calendar.opentimestamps.org',
+                'https://bob.btc.calendar.opentimestamps.org',
+                'https://finney.calendar.eternitywall.com',
+                'https://btc.calendar.catallaxy.com',
+            ],
+            'min_calendars' => 2,
+            'timeout' => 10,
+            'esplora_url' => env('MODEL_INTEGRITY_ESPLORA_URL', 'https://blockstream.info/api'),
+        ],
+
+        // A proof attested (or still pending) later than this after the
+        // versions it attests were recorded proves nothing about their time.
+        'max_delay_hours' => 72,
+
+        // When anchoring was enabled (e.g. "2026-10-01"). Versions recorded
+        // before count from this date: set it when upgrading an application
+        // that already has versions.
+        'since' => env('MODEL_INTEGRITY_ANCHORS_SINCE'),
     ],
 
     /*

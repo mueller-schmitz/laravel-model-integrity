@@ -85,4 +85,13 @@ final readonly class AnchorStatement
     {
         return hash('sha256', $this->canonical());
     }
+
+    /**
+     * The name of a file holding the canonical statement. Zero-padded, so
+     * names sort in sequence order; its SHA-256 hash is the digest.
+     */
+    public function fileName(): string
+    {
+        return sprintf('%020d-%s.json', $this->toSequence, $this->digest());
+    }
 }

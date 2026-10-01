@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use MuellerSchmitz\ModelIntegrity\Anchoring\AnchorManager;
 use MuellerSchmitz\ModelIntegrity\Console\AnchorCommand;
+use MuellerSchmitz\ModelIntegrity\Console\AnchorExportCommand;
+use MuellerSchmitz\ModelIntegrity\Console\AnchorUpgradeCommand;
 use MuellerSchmitz\ModelIntegrity\Console\GrantsCommand;
 use MuellerSchmitz\ModelIntegrity\Console\InstallCommand;
 use MuellerSchmitz\ModelIntegrity\Console\SnapshotCommand;
@@ -55,6 +57,8 @@ class ModelIntegrityServiceProvider extends ServiceProvider
 
         $this->commands([
             AnchorCommand::class,
+            AnchorExportCommand::class,
+            AnchorUpgradeCommand::class,
             GrantsCommand::class,
             InstallCommand::class,
             SnapshotCommand::class,
