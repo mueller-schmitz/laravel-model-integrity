@@ -7,15 +7,16 @@ namespace MuellerSchmitz\ModelIntegrity\Database;
 use InvalidArgumentException;
 
 /**
- * Builds the SQL that restricts the application's database user: versions
- * may only be read and appended, the chain head only read, created and
- * updated. Comment lines start with "--".
+ * Builds the SQL that restricts the application's database user: versions,
+ * stored files and anchors may only be read and appended, the chain heads only
+ * read, created and updated. Comment lines start with "--".
  */
 class GrantStatements
 {
     /**
      * @param  list<string>  $otherTables  all other tables of the database (MySQL/MariaDB with $allTables)
      * @param  list<string>  $views  all views of the database (MySQL/MariaDB with $allTables)
+     * @param  list<string>  $appendOnlyTables  further append-only tables besides the versions
      * @return list<string>
      */
     public function build(
@@ -28,7 +29,7 @@ class GrantStatements
         array $otherTables = [],
         bool $allTables = false,
         array $views = [],
-        ?string $filesTable = null,
+        array $appendOnlyTables = [],
     ): array {
         if ($user === '' && $driver !== 'sqlite') {
             throw new InvalidArgumentException('The database user must not be empty.');
@@ -37,8 +38,8 @@ class GrantStatements
         $preamble = ['-- Run php artisan migrate first: the statements refer to all integrity tables.'];
 
         return [...$preamble, ...match ($driver) {
-            'mysql', 'mariadb' => $this->mysql($user, $host, $database, $versionsTable, $headsTable, $otherTables, $views, $allTables, $filesTable),
-            'pgsql' => $this->pgsql($user, $versionsTable, $headsTable, $filesTable),
+            'mysql', 'mariadb' => $this->mysql($user, $host, $database, $versionsTable, $headsTable, $otherTables, $views, $allTables, $appendOnlyTables),
+            'pgsql' => $this->pgsql($user, $versionsTable, $headsTable, $appendOnlyTables),
             'sqlite' => [
                 '-- SQLite has no users or privileges.',
                 '-- Protect the database file with file system permissions instead.',
@@ -50,9 +51,10 @@ class GrantStatements
     /**
      * @param  list<string>  $otherTables
      * @param  list<string>  $views
+     * @param  list<string>  $appendOnly
      * @return list<string>
      */
-    private function mysql(string $user, string $host, string $database, string $versions, string $heads, array $otherTables, array $views, bool $allTables, ?string $files): array
+    private function mysql(string $user, string $host, string $database, string $versions, string $heads, array $otherTables, array $views, bool $allTables, array $appendOnly): array
     {
         $grantee = $this->mysqlString($user).'@'.$this->mysqlString($host);
         $table = fn (string $name): string => $this->mysqlIdentifier($database).'.'.$this->mysqlIdentifier($name);
@@ -80,21 +82,22 @@ class GrantStatements
             $lines[] = "-- Global privileges (GRANT ... ON *.*) and accounts with other hosts than '{$host}' are not covered.";
         }
 
-        $lines[] = '-- Versions are append-only; the chain head is updated in place.';
+        $lines[] = '-- Versions, files and anchors are append-only; the chain heads are updated in place.';
         $lines[] = "GRANT SELECT, INSERT ON {$table($versions)} TO {$grantee};";
         $lines[] = "GRANT SELECT, INSERT, UPDATE ON {$table($heads)} TO {$grantee};";
 
-        if ($files !== null) {
-            $lines[] = "GRANT SELECT, INSERT ON {$table($files)} TO {$grantee};";
+        foreach ($appendOnly as $appendOnlyTable) {
+            $lines[] = "GRANT SELECT, INSERT ON {$table($appendOnlyTable)} TO {$grantee};";
         }
 
         return $lines;
     }
 
     /**
+     * @param  list<string>  $appendOnly
      * @return list<string>
      */
-    private function pgsql(string $user, string $versions, string $heads, ?string $files): array
+    private function pgsql(string $user, string $versions, string $heads, array $appendOnly): array
     {
         $role = $this->pgsqlIdentifier($user);
 
@@ -109,10 +112,10 @@ class GrantStatements
             "GRANT SELECT, INSERT, UPDATE ON TABLE {$this->pgsqlIdentifier($heads)} TO {$role};",
         ];
 
-        if ($files !== null) {
-            $lines[] = "REVOKE ALL ON TABLE {$this->pgsqlIdentifier($files)} FROM {$role};";
-            $lines[] = "GRANT SELECT, INSERT ON TABLE {$this->pgsqlIdentifier($files)} TO {$role};";
-            $lines[] = "GRANT USAGE ON SEQUENCE {$this->pgsqlIdentifier($files.'_id_seq')} TO {$role};";
+        foreach ($appendOnly as $table) {
+            $lines[] = "REVOKE ALL ON TABLE {$this->pgsqlIdentifier($table)} FROM {$role};";
+            $lines[] = "GRANT SELECT, INSERT ON TABLE {$this->pgsqlIdentifier($table)} TO {$role};";
+            $lines[] = "GRANT USAGE ON SEQUENCE {$this->pgsqlIdentifier($table.'_id_seq')} TO {$role};";
         }
 
         return $lines;

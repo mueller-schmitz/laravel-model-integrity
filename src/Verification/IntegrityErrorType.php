@@ -29,4 +29,7 @@ enum IntegrityErrorType: string
 
     /** A referenced or stored file is unknown, missing on its disk, or differs in size or content. */
     case FileMismatch = 'file_mismatch';
+
+    /** An anchor does not match the versions it attests, its proof, or the other anchors. */
+    case AnchorMismatch = 'anchor_mismatch';
 }

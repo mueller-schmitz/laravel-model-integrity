@@ -65,4 +65,9 @@ class IntegrityConfigurationException extends LogicException
     {
         return new self(sprintf('Invalid value [%s] for [%s] on [%s].', $value, $option, $model::class));
     }
+
+    public static function invalidConfig(string $key, string $expected): self
+    {
+        return new self("Config [{$key}] must be {$expected}.");
+    }
 }

@@ -8,6 +8,18 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- Anchors: `model-integrity:anchor` attests the versions recorded since the last anchor outside the database. A statement (anchor format 1, specified in the README) holds the range of the global sequence, the RFC 6962 Merkle root of its version hashes and the digest of the previous anchor; drivers anchor its SHA-256 digest
+- Disk anchor driver: writes each statement as a file to a separate disk; verification also checks statements on the disk that the database no longer contains
+- Custom anchor drivers via `AnchorManager::extend()`
+- Append-only tables `integrity_anchors` and `integrity_anchor_proofs` with triggers and privileges; the `anchors` head row serializes anchor runs
+- Error type `AnchorMismatch`; `checkAnchors()`, also part of `checkAll()` and `model-integrity:verify`. An anchor beyond the end of the chain is reported as `TruncatedChain`
+
+### Changed
+
+- `model-integrity:triggers` and `model-integrity:grants` cover the anchor tables
+
 ## [0.2.0] - 2026-09-29
 
 ### Added

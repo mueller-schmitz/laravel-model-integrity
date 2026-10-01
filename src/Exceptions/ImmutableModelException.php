@@ -32,6 +32,11 @@ class ImmutableModelException extends RuntimeException
         return new self('Recorded versions are append-only and cannot be changed or deleted.');
     }
 
+    public static function anchorModification(): self
+    {
+        return new self('Anchors are append-only and written only by model-integrity:anchor.');
+    }
+
     private static function key(Model $model): string
     {
         $key = $model->getKey();

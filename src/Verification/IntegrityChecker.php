@@ -63,6 +63,7 @@ class IntegrityChecker
     public function __construct(
         private readonly Hasher $hasher,
         private readonly SnapshotBuilder $snapshots,
+        private readonly AnchorVerifier $anchors,
     ) {}
 
     public function checkModel(Model $model): IntegrityResult
@@ -146,7 +147,9 @@ class IntegrityChecker
      */
     public function checkAll(bool $stopOnFirstFailure = false, ?Closure $progress = null): IntegrityResult
     {
-        $result = $this->consistently(function () use ($stopOnFirstFailure, $progress): IntegrityResult {
+        $listed = $this->anchors->listedStatements();
+
+        $result = $this->consistently(function () use ($stopOnFirstFailure, $progress, $listed): IntegrityResult {
             $progress?->__invoke('Checking the global chain');
             $chain = $this->inspectChain();
 
@@ -155,6 +158,13 @@ class IntegrityChecker
             }
 
             $results = [$chain];
+
+            $progress?->__invoke('Checking the anchors');
+            $results[] = $this->anchors->inspect($listed);
+
+            if ($stopOnFirstFailure && end($results)->fails()) {
+                return IntegrityResult::combine($results, $chain->checkedVersions());
+            }
 
             foreach ($this->recordedTypes() as $type) {
                 $progress?->__invoke('Checking '.(Relation::getMorphedModel($type) ?? $type));
@@ -180,6 +190,24 @@ class IntegrityChecker
     public function checkChain(): IntegrityResult
     {
         $result = $this->consistently(fn (): IntegrityResult => $this->inspectChain());
+
+        $this->dispatchOnFailure($result, null);
+
+        return $result;
+    }
+
+    /**
+     * Checks every anchor: its statement against the versions it attests, its
+     * link to the previous anchor and the proof of each driver. Statements a
+     * driver can list (e.g. on the anchor disk) are checked against the
+     * versions even if the database no longer contains them.
+     * checkedVersions() counts the anchors in the database.
+     */
+    public function checkAnchors(): IntegrityResult
+    {
+        // Listed before the read view is fixed, see AnchorVerifier::listedStatements().
+        $listed = $this->anchors->listedStatements();
+        $result = $this->consistently(fn (): IntegrityResult => $this->anchors->inspect($listed));
 
         $this->dispatchOnFailure($result, null);
 

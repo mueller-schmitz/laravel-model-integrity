@@ -60,3 +60,25 @@ it('creates the heads table with the global head', function (): void {
         ->and((int) $head->sequence)->toBe(0)
         ->and($head->hash)->toBeNull();
 });
+
+it('creates the anchor tables and the anchors head', function (): void {
+    expect(Schema::hasColumns('integrity_anchors', ['id', 'anchor_format', 'from_sequence', 'to_sequence', 'merkle_root', 'prev_digest', 'digest', 'created_at']))->toBeTrue()
+        ->and(Schema::hasColumns('integrity_anchor_proofs', ['id', 'anchor_id', 'driver', 'proof', 'created_at']))->toBeTrue()
+        ->and(collect(Schema::getIndexes('integrity_anchors'))->where('unique', true)->pluck('columns')->all())->toContain(['to_sequence'])->toContain(['digest']);
+
+    $head = DB::table('integrity_heads')->where('chain', 'anchors')->first();
+
+    expect($head)->not->toBeNull()
+        ->and((int) $head->sequence)->toBe(0)
+        ->and($head->hash)->toBeNull();
+});
+
+it('keeps the index names of all integrity tables within the identifier limit', function (): void {
+    $tooLong = collect(['integrity_versions', 'integrity_files', 'integrity_anchors', 'integrity_anchor_proofs'])
+        ->flatMap(fn (string $table): array => array_column(Schema::getIndexes($table), 'name'))
+        ->filter(fn (string $name): bool => strlen($name) > 63)
+        ->values()
+        ->all();
+
+    expect($tooLong)->toBe([]);
+});

@@ -7,7 +7,7 @@
 
 Immutable and versioned Eloquent models with a gapless, cryptographically verifiable history.
 
-> **Status:** v0.1 – the API may still change in minor versions before 1.0. Files, external anchors (OpenTimestamps, RFC 3161), crypto-shredding and an auditor export are planned.
+> **Status:** before 1.0 – the API may still change in minor versions. OpenTimestamps and RFC 3161 anchors, crypto-shredding and an auditor export are planned.
 
 ## Scope
 
@@ -16,7 +16,7 @@ This package is **tamper-evident, not tamper-proof**:
 - Changes through the application are either forbidden (`immutable`) or recorded as a new version (`versioned`).
 - Changing recorded versions outside the application is blocked by database triggers and privileges. A database administrator can still bypass both, for example by dropping the triggers. Changing or removing single versions afterwards is **detected** by the verification, not prevented.
 - The hash chain proves **integrity, not completeness**: operations that were never recorded are unknown to the chain. The state drift check compares the current model state against the last snapshot to surface such gaps.
-- The chain is a plain SHA-256 chain without a secret. Whoever can write to both integrity tables can rewrite it consistently from any point on, and restoring an older backup yields a consistent but outdated history. Until external anchors exist (planned for v0.3), only the state drift check may notice such cases, and only if the model rows differ from the rewritten snapshots.
+- The chain is a plain SHA-256 chain without a secret. Whoever can write to the integrity tables can rewrite it consistently from any point on, and restoring an older backup yields a consistent but outdated history. [Anchors](#anchors) detect both, as far as they reach: an anchor attests the chain up to the moment it was created, outside the database. Versions recorded after the last anchor are only protected by the chain itself.
 
 ## Performance cost
 
@@ -42,6 +42,17 @@ php artisan migrate
 
 `model-integrity:install` publishes the config and the migrations that are not published yet; running it again does not duplicate them. Prefer it over `vendor:publish --tag=model-integrity-migrations`, which copies all migrations again under new timestamps.
 
+### Upgrading from 0.2
+
+```bash
+composer require mueller-schmitz/laravel-model-integrity:^0.3
+php artisan model-integrity:install   # publishes only the new migrations for anchors
+php artisan migrate
+php artisan model-integrity:grants    # use the same options as at installation
+```
+
+Run the printed statements as an administrative user, then configure an anchor disk and schedule `model-integrity:anchor` (see [Anchors](#anchors)). The first anchor covers all existing versions.
+
 ### Upgrading from 0.1
 
 ```bash
@@ -61,15 +72,15 @@ Model events are not the only way to change data. Queries like `Invoice::where(.
 
 ### Triggers
 
-The migrations install triggers that reject `UPDATE` and `DELETE` on `integrity_versions` (MySQL, MariaDB, PostgreSQL, SQLite). On PostgreSQL they reject `TRUNCATE` as well; on MySQL and MariaDB `TRUNCATE` fires no triggers and is prevented by privileges.
+The migrations install triggers that reject `UPDATE` and `DELETE` on `integrity_versions`, `integrity_files`, `integrity_anchors` and `integrity_anchor_proofs` (MySQL, MariaDB, PostgreSQL, SQLite). On PostgreSQL they reject `TRUNCATE` as well; on MySQL and MariaDB `TRUNCATE` fires no triggers and is prevented by privileges.
 
 - MySQL with binary logging requires `SUPER` or `log_bin_trust_function_creators = 1` to create triggers (MySQL 8.4: the `SET_ANY_DEFINER` privilege).
 - If the migration user may not create triggers, set `MODEL_INTEGRITY_APPEND_ONLY_TRIGGERS=false` and rely on privileges. `php artisan model-integrity:triggers` installs them later (`--remove` drops them).
-- The head rows (`integrity_heads`) are updated on every write and have no trigger. A head that no longer matches the last version is reported by the verification.
+- The head rows (`integrity_heads`) are updated on every write and have no trigger. A head that no longer matches the last version or anchor is reported by the verification.
 
 ### Privileges
 
-The application's database user should only read and append versions. Print the matching SQL for your database:
+The application's database user should only read and append versions, files and anchors. Print the matching SQL for your database:
 
 ```bash
 php artisan model-integrity:grants --user=app
@@ -250,7 +261,8 @@ IntegrityChecker::getHistory($invoice, verify: true);  // each version with ->is
 IntegrityChecker::versionAt($invoice, '2026-03-01');   // version current at that moment
 IntegrityChecker::checkType(Invoice::class);           // all invoices, including deleted ones
 IntegrityChecker::checkChain();                        // the global chain over all models
-IntegrityChecker::checkAll();                          // global chain and every recorded model
+IntegrityChecker::checkAll();                          // global chain, anchors and every recorded model
+IntegrityChecker::checkAnchors();                      // the anchors against the versions and their proofs
 IntegrityChecker::checkFiles();                        // hashes the content of every stored file
 ```
 
@@ -261,7 +273,7 @@ Date strings passed to `versionAt()` are read in the application timezone.
 ### Command and scheduling
 
 ```bash
-php artisan model-integrity:verify                                  # global chain and all recorded models
+php artisan model-integrity:verify                                  # global chain, anchors and all recorded models
 php artisan model-integrity:verify --model="App\Models\Invoice"     # one type (class or morph alias)
 php artisan model-integrity:verify --model="App\Models\Invoice" --id=42
 php artisan model-integrity:verify --fail-fast                      # stop at the first failing model
@@ -286,10 +298,11 @@ Schedule::command('model-integrity:verify')->dailyAt('03:00')->emailOutputOnFail
 | `BrokenChain` | A version is not referenced by its successor (per model or globally) |
 | `VersionGap` | Version numbers of a model are not consecutive |
 | `SequenceGap` | The global sequence has a gap: versions were removed |
-| `TruncatedChain` | A head (global or per model) does not match the last version: the end was cut off, the head is behind the last version, or it was removed |
+| `TruncatedChain` | A head (global or per model) does not match the last version: the end was cut off, the head is behind the last version, or it was removed; or an anchor attests versions beyond the end of the chain |
 | `StateDrift` | The current row differs from the last snapshot, was deleted or restored outside the application, or was never recorded |
 | `Unverifiable` | Versions exist whose model class is missing, does not use the trait, or was recorded under a former morph class |
 | `FileMismatch` | A file referenced by any version is unknown, missing on its disk or has another size; with `checkFiles()`/`--files` also a changed content |
+| `AnchorMismatch` | An anchor does not match the versions it attests, its proof, the previous anchor or the anchors head |
 
 Every model check verifies that the files referenced by a model's versions exist with their recorded size. Hashing the content reads every file, so it only runs with `checkFiles()` or `verify --files`, for example weekly in the scheduler.
 
@@ -299,9 +312,83 @@ Checks run in a read transaction with `REPEATABLE READ`, so versions recorded wh
 
 ### Limits
 
-- If the last versions **and** both heads (global and per model) are rewritten together, the chains are consistent again. Only the state drift check notices it if the model state differs. External anchors (planned for v0.3) close this gap; see Scope.
+- If the last versions **and** both heads (global and per model) are rewritten together, the chains are consistent again. Anchors detect it for the versions they cover; for versions after the last anchor only the state drift check notices it, if the model state differs. Anchor frequently.
 - `checkAll()` discovers models through their recorded versions. Tables whose models never had a version are only checked by `checkType()`.
 - `checkType()` keeps the recorded keys of the type in memory (roughly 50 MB per million models). Versions are streamed in chunks, so long histories do not.
+
+## Anchors
+
+The chain itself has no secret: an attacker with write access to the database can rewrite it consistently, recomputing every hash and head. An anchor prevents this from going unnoticed. It attests the versions recorded since the previous anchor in a place the database cannot change.
+
+```bash
+php artisan model-integrity:anchor                  # with the configured drivers
+php artisan model-integrity:anchor --driver=disk    # with the given drivers only
+```
+
+```php
+// routes/console.php
+Schedule::command('model-integrity:anchor')->hourly()->withoutOverlapping();
+```
+
+Each run covers the global sequence from the end of the previous anchor to the current head, so every version is anchored exactly once. Without new versions nothing is anchored. Parallel runs are serialized by a lock on the `anchors` head row; recording writes are not blocked. If the chain has a gap, the run fails and nothing is kept.
+
+Anchors are linked: each one contains the digest of the previous one. If a driver fails in one run, its next anchor attests the earlier ones through this link. The command keeps an anchor as long as one driver succeeded and exits with code `1` if any driver failed.
+
+### Disk driver
+
+```php
+// config/model-integrity.php
+'anchors' => [
+    'drivers' => ['disk'],
+    'disk' => [
+        'disk' => env('MODEL_INTEGRITY_ANCHOR_DISK', 'local'),
+        'path' => 'integrity-anchors',
+    ],
+],
+```
+
+The disk driver writes every statement as a file named `{to_sequence}-{digest}.json`; the SHA-256 hash of the file is the digest. The anchor only helps if whoever can change the database cannot change this disk: use storage on another system with its own credentials, ideally write-once (for example an S3 bucket with object lock in compliance mode). The default `local` disk is only suitable for trying it out.
+
+Verification lists the files on the disk and checks each statement against the versions it covers, whether or not the database still contains that anchor. Deleting the anchor rows together with a rewritten chain is therefore detected as well. A statement left over by a failed run that matches the versions is not reported. Listing reads every statement file on each verification; on object storage that is one request per anchor.
+
+### Restoring a backup
+
+Restoring the database to an earlier state is, from the anchors' point of view, a cut-off chain: statements on the anchor disk attest versions the database no longer has (`TruncatedChain`), and once new versions reuse those sequence numbers, `AnchorMismatch`. This is intended – the anchors show that history was lost. To continue with a passing verification:
+
+1. Keep the existing statement files as evidence of what was lost (with object lock they cannot be removed anyway) and document the restore.
+2. Point `anchors.disk.path` to a new, empty directory on the same disk. The anchors in the restored database still reference their files under the old path, so their proofs keep verifying.
+3. Run `model-integrity:anchor`.
+
+### Isolation on PostgreSQL
+
+Anchor runs wait for each other on the `anchors` head row. With the default `READ COMMITTED` isolation the waiting run then continues; if the connection is configured for `REPEATABLE READ` or `SERIALIZABLE`, PostgreSQL aborts it with a serialization error instead. Use `withoutOverlapping()` in the scheduler, or keep the default isolation for the anchor command.
+
+### Custom drivers
+
+A driver implements `MuellerSchmitz\ModelIntegrity\Anchoring\Contracts\Anchor` (`submit()` returns the proof to keep, `verify()` checks it) and optionally `ListsStatements`. Register it in a service provider and add its name to `anchors.drivers`:
+
+```php
+use MuellerSchmitz\ModelIntegrity\Anchoring\AnchorManager;
+
+app(AnchorManager::class)->extend('archive', fn () => new ArchiveAnchor);
+```
+
+### Anchor format
+
+An anchor statement is the canonical JSON (see [Canonical JSON](#canonical-json)) of exactly these fields; its digest is the lowercase hex SHA-256 of that string. Format `1` never changes.
+
+| Field | Content |
+|---|---|
+| `anchor_format` | `1` |
+| `from_sequence`, `to_sequence` | the range of the global sequence, inclusive |
+| `merkle_root` | Merkle root of the version hashes of the range, in sequence order |
+| `prev_digest` | digest of the previous anchor, `null` for the first |
+
+The Merkle root follows RFC 6962, section 2.1, over the 32-byte version hashes: a leaf is `sha256(0x00 || hash)`, a node `sha256(0x01 || left || right)`, and a list of `n > 1` leaves is split after the largest power of two smaller than `n`. Leaves are never duplicated.
+
+```text
+{"anchor_format":1,"from_sequence":1,"merkle_root":"0073e5dfb5d3c6f71fb0dc1db2f096e02a2d6fd6d7a59d23c100b15a8488dac4","prev_digest":null,"to_sequence":3}
+```
 
 ## Hash format
 

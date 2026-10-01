@@ -12,6 +12,7 @@ use MuellerSchmitz\ModelIntegrity\Verification\IntegrityChecker as Checker;
  * @method static \MuellerSchmitz\ModelIntegrity\Verification\IntegrityResult checkType(class-string<\Illuminate\Database\Eloquent\Model> $class, bool $stopOnFirstFailure = false)
  * @method static \MuellerSchmitz\ModelIntegrity\Verification\IntegrityResult checkChain()
  * @method static \MuellerSchmitz\ModelIntegrity\Verification\IntegrityResult checkAll(bool $stopOnFirstFailure = false, ?\Closure $progress = null)
+ * @method static \MuellerSchmitz\ModelIntegrity\Verification\IntegrityResult checkAnchors()
  * @method static \MuellerSchmitz\ModelIntegrity\Verification\IntegrityResult checkFiles(bool $contents = true)
  * @method static \Illuminate\Support\Collection<int, \MuellerSchmitz\ModelIntegrity\Models\Version> getHistory(\Illuminate\Database\Eloquent\Model $model, bool $verify = false)
  * @method static \MuellerSchmitz\ModelIntegrity\Models\Version|null versionAt(\Illuminate\Database\Eloquent\Model $model, \DateTimeInterface|string $date)

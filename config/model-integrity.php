@@ -27,6 +27,8 @@ return [
         'versions' => 'integrity_versions',
         'heads' => 'integrity_heads',
         'files' => 'integrity_files',
+        'anchors' => 'integrity_anchors',
+        'anchor_proofs' => 'integrity_anchor_proofs',
     ],
 
     /*
@@ -57,6 +59,28 @@ return [
 
     'actor' => [
         'guards' => null,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Anchors
+    |--------------------------------------------------------------------------
+    |
+    | `php artisan model-integrity:anchor` attests new versions outside the
+    | database with each of the listed drivers. An anchor only helps if the
+    | database cannot change where it is kept: use a disk on other storage,
+    | ideally write-once (e.g. a bucket with object lock), with credentials
+    | separate from the database.
+    |
+    */
+
+    'anchors' => [
+        'drivers' => ['disk'],
+
+        'disk' => [
+            'disk' => env('MODEL_INTEGRITY_ANCHOR_DISK', 'local'),
+            'path' => 'integrity-anchors',
+        ],
     ],
 
     /*

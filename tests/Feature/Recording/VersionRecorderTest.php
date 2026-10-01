@@ -101,7 +101,7 @@ it('keeps a head row per model', function (): void {
         ->and($head)->not->toBeNull()
         ->and((int) $head->sequence)->toBe(2)
         ->and($head->hash)->toBe($last->hash)
-        ->and(DB::table('integrity_heads')->count())->toBe(2);
+        ->and(DB::table('integrity_heads')->where('chain', 'like', 'model%')->count())->toBe(1);
 });
 
 it('takes version number and prev_hash from the model head instead of the versions table', function (): void {

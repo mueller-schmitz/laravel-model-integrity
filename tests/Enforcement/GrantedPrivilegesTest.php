@@ -57,7 +57,9 @@ beforeEach(function (): void {
 
     dropRestrictedUser($this->admin);
     app(AppendOnlyTriggers::class)->uninstall($this->admin, 'integrity_versions');
-    app(AppendOnlyTriggers::class)->uninstall($this->admin, 'integrity_files');
+    foreach (['integrity_files', 'integrity_anchors', 'integrity_anchor_proofs'] as $table) {
+        app(AppendOnlyTriggers::class)->uninstall($this->admin, $table);
+    }
 
     $this->admin->unprepared($this->admin->getDriverName() === 'pgsql'
         ? 'CREATE ROLE "'.RESTRICTED_USER."\" LOGIN PASSWORD '".RESTRICTED_PASSWORD."'"
@@ -127,7 +129,7 @@ it('lets the application record, delete and verify through the package API', fun
     $invoice->delete();
 
     expect($this->restricted->table('integrity_versions')->count())->toBe(5)
-        ->and($this->restricted->table('integrity_heads')->count())->toBe(3)
+        ->and($this->restricted->table('integrity_heads')->where('chain', 'like', 'model%')->count())->toBe(2)
         ->and(app(IntegrityChecker::class)->checkAll()->errors()->map(fn ($e) => (string) $e)->all())->toBe([]);
 });
 
@@ -146,6 +148,25 @@ it('lets the application store and reference files', function (): void {
         ->and(fn () => $this->restricted->table('integrity_files')->update(['size' => 1]))
         ->toThrow(QueryException::class, $this->restricted->getDriverName() === 'pgsql' ? 'permission denied' : 'denied');
 });
+
+it('lets the application anchor and verify the anchors', function (string $table): void {
+    config([
+        'model-integrity.connection' => 'mi_restricted',
+        'model-integrity.anchors.drivers' => ['disk'],
+        'model-integrity.anchors.disk' => ['disk' => 'anchors', 'path' => 'statements'],
+    ]);
+    Storage::fake('anchors');
+
+    Invoice::on('mi_restricted')->create(['number' => 'RE-1', 'total' => '1.00']);
+    Artisan::call('model-integrity:anchor');
+    Invoice::on('mi_restricted')->create(['number' => 'RE-2', 'total' => '2.00']);
+
+    expect(Artisan::call('model-integrity:anchor'))->toBe(0)
+        ->and($this->restricted->table('integrity_anchors')->count())->toBe(2)
+        ->and(app(IntegrityChecker::class)->checkAll()->errors()->map(fn ($e) => (string) $e)->all())->toBe([])
+        ->and(fn () => $this->restricted->table($table)->update(['created_at' => '2026-10-02 00:00:00']))
+        ->toThrow(QueryException::class, $this->restricted->getDriverName() === 'pgsql' ? 'permission denied' : 'denied');
+})->with(['integrity_anchors', 'integrity_anchor_proofs']);
 
 it('allows the shared lock the file store uses to find committed records on MySQL and MariaDB', function (): void {
     $this->restricted->transaction(function (): void {
