@@ -66,7 +66,7 @@ it('keeps recording and verification working', function (): void {
 
     expect(Version::query()->count())->toBe(4)
         ->and($this->invoice->verifyIntegrity()->passes())->toBeTrue()
-        ->and(DB::table('integrity_heads')->value('sequence'))->toEqual(4);
+        ->and(DB::table('integrity_heads')->where('chain', 'global')->value('sequence'))->toEqual(4);
 });
 
 it('can be removed and installed again', function (): void {
