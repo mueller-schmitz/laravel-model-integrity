@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace MuellerSchmitz\ModelIntegrity\Anchoring;
 
+use Carbon\CarbonImmutable;
 use Generator;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
@@ -14,6 +15,20 @@ use Illuminate\Support\Facades\DB;
 class VersionHashes
 {
     private const int CHUNK = 1000;
+
+    /**
+     * When the last version of the range was recorded, in UTC.
+     */
+    public function latestCreatedAt(int $from, int $to): ?CarbonImmutable
+    {
+        $configured = config('model-integrity.connection');
+        $latest = DB::connection(is_string($configured) ? $configured : null)
+            ->table(Config::string('model-integrity.tables.versions'))
+            ->whereBetween('sequence', [$from, $to])
+            ->max('created_at');
+
+        return is_string($latest) ? new CarbonImmutable($latest, 'UTC') : null;
+    }
 
     /**
      * The stored hashes of the range in sequence order, keyed by sequence.

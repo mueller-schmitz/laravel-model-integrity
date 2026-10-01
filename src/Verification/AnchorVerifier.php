@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace MuellerSchmitz\ModelIntegrity\Verification;
 
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use MuellerSchmitz\ModelIntegrity\Anchoring\AnchorManager;
 use MuellerSchmitz\ModelIntegrity\Anchoring\AnchorStatement;
 use MuellerSchmitz\ModelIntegrity\Anchoring\AnchorStatus;
+use MuellerSchmitz\ModelIntegrity\Anchoring\AnchorVerification;
 use MuellerSchmitz\ModelIntegrity\Anchoring\Contracts\ListsStatements;
 use MuellerSchmitz\ModelIntegrity\Anchoring\MerkleTree;
 use MuellerSchmitz\ModelIntegrity\Anchoring\VersionHashes;
@@ -32,6 +34,9 @@ use Throwable;
  */
 class AnchorVerifier
 {
+    /** Tolerated difference between the clocks of the servers that record versions and anchors. */
+    private const int CLOCK_SKEW_MINUTES = 10;
+
     public function __construct(
         private readonly AnchorManager $drivers,
         private readonly MerkleTree $tree,
@@ -74,6 +79,10 @@ class AnchorVerifier
 
             if (($problem = $this->rangeProblem($statement, $maxSequence)) !== null) {
                 $errors[] = $this->error($problem[0], "Anchor #{$anchor->id} {$problem[1]}", $anchor->to_sequence);
+            } elseif (($recorded = $this->versions->latestCreatedAt($anchor->from_sequence, $anchor->to_sequence)) !== null
+                && $anchor->created_at !== null && $recorded->greaterThan($anchor->created_at->addMinutes(self::CLOCK_SKEW_MINUTES))) {
+                // An anchor is created after its versions; otherwise its time was rewritten.
+                $errors[] = $this->error(IntegrityErrorType::AnchorMismatch, "Anchor #{$anchor->id} was created at {$anchor->created_at->toIso8601String()}, but attests versions recorded after that ({$recorded->toIso8601String()}).", $anchor->to_sequence);
             }
 
             foreach ($this->proofProblems($anchor, $statement) as [$type, $message]) {
@@ -170,10 +179,37 @@ class AnchorVerifier
 
             if ($verification->status === AnchorStatus::Invalid) {
                 $problems[] = [IntegrityErrorType::AnchorMismatch, "The [{$driver}] proof of anchor #{$anchor->id} is invalid: {$verification->message}"];
+            } elseif (($late = $this->lateProof($anchor, $verification)) !== null) {
+                $problems[] = [IntegrityErrorType::AnchorMismatch, "The [{$driver}] proof of anchor #{$anchor->id} {$late}"];
             }
         }
 
         return $problems;
+    }
+
+    /**
+     * A proof attests when the statement existed. One obtained long after the
+     * anchor was created proves nothing about the time of the anchor: it may
+     * be a fresh proof for a statement forged afterwards.
+     */
+    private function lateProof(AnchorRecord $anchor, AnchorVerification $verification): ?string
+    {
+        if ($anchor->created_at === null) {
+            return null;
+        }
+
+        $hours = Config::integer('model-integrity.anchors.max_delay_hours', 72);
+        $deadline = $anchor->created_at->addHours($hours);
+
+        if ($verification->status === AnchorStatus::Confirmed && $verification->attestedAt?->greaterThan($deadline)) {
+            return "was attested at {$verification->attestedAt->toIso8601String()}, more than {$hours} hours after the anchor was created ({$anchor->created_at->toIso8601String()}).";
+        }
+
+        if ($verification->status === AnchorStatus::Pending && CarbonImmutable::now()->greaterThan($deadline)) {
+            return "is still pending more than {$hours} hours after the anchor was created; run model-integrity:anchor-upgrade.";
+        }
+
+        return null;
     }
 
     /**

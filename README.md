@@ -7,7 +7,7 @@
 
 Immutable and versioned Eloquent models with a gapless, cryptographically verifiable history.
 
-> **Status:** before 1.0 – the API may still change in minor versions. OpenTimestamps and RFC 3161 anchors, crypto-shredding and an auditor export are planned.
+> **Status:** before 1.0 – the API may still change in minor versions. RFC 3161 anchors, crypto-shredding and an auditor export are planned.
 
 ## Scope
 
@@ -328,6 +328,7 @@ php artisan model-integrity:anchor --driver=disk    # with the given drivers onl
 ```php
 // routes/console.php
 Schedule::command('model-integrity:anchor')->hourly()->withoutOverlapping();
+Schedule::command('model-integrity:anchor-upgrade')->hourly()->withoutOverlapping(); // OpenTimestamps
 ```
 
 Each run covers the global sequence from the end of the previous anchor to the current head, so every version is anchored exactly once. Without new versions nothing is anchored. Parallel runs are serialized by a lock on the `anchors` head row; recording writes are not blocked. If the chain has a gap, the run fails and nothing is kept.
@@ -351,6 +352,46 @@ The disk driver writes every statement as a file named `{to_sequence}-{digest}.j
 
 Verification lists the files on the disk and checks each statement against the versions it covers, whether or not the database still contains that anchor. Deleting the anchor rows together with a rewritten chain is therefore detected as well. A statement left over by a failed run that matches the versions is not reported. Listing reads every statement file on each verification; on object storage that is one request per anchor.
 
+### OpenTimestamps driver
+
+```php
+// config/model-integrity.php
+'anchors' => [
+    'drivers' => ['disk', 'opentimestamps'],
+    'opentimestamps' => [
+        'calendars' => [/* four public calendars by default */],
+        'min_calendars' => 2,
+        'timeout' => 10,
+        'esplora_url' => env('MODEL_INTEGRITY_ESPLORA_URL', 'https://blockstream.info/api'),
+    ],
+    'max_delay_hours' => 72,
+],
+```
+
+[OpenTimestamps](https://opentimestamps.org) anchors the digest in Bitcoin through public calendar servers – free, without an account. Only the 32-byte digest leaves your server. A run submits it to every configured calendar and keeps the answers as one standard `.ots` proof; it succeeds if at least `min_calendars` answered.
+
+The proof is pending at first. Within a few hours the calendars commit to a Bitcoin block; `model-integrity:anchor-upgrade` then fetches the completed proof and stores it as a new proof row, keeping the previous one. Only the configured calendars are asked, never a URL taken from a stored proof.
+
+Verification evaluates the proof and checks each Bitcoin attestation against the block header from an Esplora API (`esplora_url`: blockstream.info by default, mempool.space, or your own electrs/mempool instance to rely on no third party). Without that check, anyone who can write the proof could invent an attestation. If the block source cannot be reached, the proof is reported as `Unverifiable`, never accepted unchecked.
+
+#### What the time proves
+
+A Bitcoin attestation proves that the statement existed when the block was mined. A chain rewritten later can only get fresh proofs, so verification also requires:
+
+- the proof was attested at most `max_delay_hours` after the anchor was created, and a proof still pending after that time is reported;
+- every version an anchor attests was recorded before the anchor (10 minutes of clock difference between servers are tolerated).
+
+Whoever rewrites old history therefore also has to move every version and anchor timestamp to the time of the forgery. The rewritten history then claims that everything was recorded recently, which other records (documents, emails, backups) contradict. The package cannot detect that on its own; OpenTimestamps alone does not protect versions that are newer than the last confirmed anchor.
+
+#### Checking without this package
+
+```bash
+php artisan model-integrity:anchor-export 42 ./audit
+ots verify ./audit/00000000000000001234-<digest>.json.ots
+```
+
+`model-integrity:anchor-export` writes the statement of an anchor and its proof files. The statement file's SHA-256 hash is the anchored digest, so the standard `ots` client verifies it against your own Bitcoin node. Recompute the Merkle root from the version hashes (see [Anchor format](#anchor-format)) to tie the statement to the versions.
+
 ### Restoring a backup
 
 Restoring the database to an earlier state is, from the anchors' point of view, a cut-off chain: statements on the anchor disk attest versions the database no longer has (`TruncatedChain`), and once new versions reuse those sequence numbers, `AnchorMismatch`. This is intended – the anchors show that history was lost. To continue with a passing verification:
@@ -365,7 +406,7 @@ Anchor runs wait for each other on the `anchors` head row. With the default `REA
 
 ### Custom drivers
 
-A driver implements `MuellerSchmitz\ModelIntegrity\Anchoring\Contracts\Anchor` (`submit()` returns the proof to keep, `verify()` checks it) and optionally `ListsStatements`. Register it in a service provider and add its name to `anchors.drivers`:
+A driver implements `MuellerSchmitz\ModelIntegrity\Anchoring\Contracts\Anchor` (`submit()` returns the proof to keep, `verify()` checks it and may return the time of the attestation) and optionally `ListsStatements`, `UpgradesProofs` and `ExportsProofs`. Register it in a service provider and add its name to `anchors.drivers`:
 
 ```php
 use MuellerSchmitz\ModelIntegrity\Anchoring\AnchorManager;

@@ -13,6 +13,7 @@ use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Contract;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Post;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Tag;
+use MuellerSchmitz\ModelIntegrity\Tests\Support\OpenTimestampsFake;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityChecker;
 
 /*
@@ -167,6 +168,21 @@ it('lets the application anchor and verify the anchors', function (string $table
         ->and(fn () => $this->restricted->table($table)->update(['created_at' => '2026-10-02 00:00:00']))
         ->toThrow(QueryException::class, $this->restricted->getDriverName() === 'pgsql' ? 'permission denied' : 'denied');
 })->with(['integrity_anchors', 'integrity_anchor_proofs']);
+
+it('lets the application upgrade OpenTimestamps proofs', function (): void {
+    config(['model-integrity.connection' => 'mi_restricted']);
+    OpenTimestampsFake::install();
+    config(['model-integrity.anchors.drivers' => ['opentimestamps']]);
+
+    Invoice::on('mi_restricted')->create(['number' => 'RE-1', 'total' => '1.00']);
+    Artisan::call('model-integrity:anchor');
+    $digest = (string) $this->restricted->table('integrity_anchors')->value('digest');
+    OpenTimestampsFake::confirm(OpenTimestampsFake::ALICE, (string) hex2bin($digest), 900000, now('UTC')->toDateTimeString());
+
+    expect(Artisan::call('model-integrity:anchor-upgrade'))->toBe(0)
+        ->and($this->restricted->table('integrity_anchor_proofs')->count())->toBe(2)
+        ->and(app(IntegrityChecker::class)->checkAll()->errors()->map(fn ($e) => (string) $e)->all())->toBe([]);
+});
 
 it('allows the shared lock the file store uses to find committed records on MySQL and MariaDB', function (): void {
     $this->restricted->transaction(function (): void {

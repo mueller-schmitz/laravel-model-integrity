@@ -8,6 +8,10 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Manager;
 use MuellerSchmitz\ModelIntegrity\Anchoring\Contracts\Anchor;
 use MuellerSchmitz\ModelIntegrity\Anchoring\Drivers\DiskAnchor;
+use MuellerSchmitz\ModelIntegrity\Anchoring\Drivers\OpenTimestampsAnchor;
+use MuellerSchmitz\ModelIntegrity\Anchoring\OpenTimestamps\CalendarClient;
+use MuellerSchmitz\ModelIntegrity\Anchoring\OpenTimestamps\Codec;
+use MuellerSchmitz\ModelIntegrity\Anchoring\OpenTimestamps\EsploraClient;
 use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
 
 /**
@@ -44,6 +48,31 @@ class AnchorManager extends Manager
     public function getDefaultDriver(): string
     {
         return $this->enabledDrivers()[0] ?? throw IntegrityConfigurationException::invalidConfig('model-integrity.anchors.drivers', 'at least one driver name');
+    }
+
+    protected function createOpentimestampsDriver(): Anchor
+    {
+        $calendars = [];
+
+        foreach (Config::array('model-integrity.anchors.opentimestamps.calendars', []) as $calendar) {
+            if (! is_string($calendar) || ! str_starts_with($calendar, 'https://')) {
+                throw IntegrityConfigurationException::invalidConfig('model-integrity.anchors.opentimestamps.calendars', 'a list of https:// calendar URLs');
+            }
+
+            $calendars[] = $calendar;
+        }
+
+        if ($calendars === []) {
+            throw IntegrityConfigurationException::invalidConfig('model-integrity.anchors.opentimestamps.calendars', 'a list of https:// calendar URLs');
+        }
+
+        return new OpenTimestampsAnchor(
+            $this->container->make(CalendarClient::class),
+            $this->container->make(Codec::class),
+            $this->container->make(EsploraClient::class),
+            $calendars,
+            Config::integer('model-integrity.anchors.opentimestamps.min_calendars', 2),
+        );
     }
 
     protected function createDiskDriver(): Anchor

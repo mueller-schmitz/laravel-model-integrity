@@ -1,4 +1,7 @@
 * text=auto eol=lf
+*.bin binary
+*.ots binary
+/tests/Fixtures/opentimestamps/fixture.txt binary
 
 /.github            export-ignore
 /tests              export-ignore
