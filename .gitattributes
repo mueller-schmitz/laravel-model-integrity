@@ -13,3 +13,4 @@
 /pint.json          export-ignore
 *.tsr binary
 *.tsq binary
+*.der binary

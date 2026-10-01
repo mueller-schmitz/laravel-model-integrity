@@ -7,6 +7,6 @@ namespace MuellerSchmitz\ModelIntegrity\Exceptions;
 use InvalidArgumentException;
 
 /**
- * An OpenTimestamps proof that cannot be read or evaluated.
+ * An OpenTimestamps proof or RFC 3161 time-stamp that cannot be read or is not valid.
  */
 class InvalidTimestampException extends InvalidArgumentException {}

@@ -57,3 +57,15 @@ it('rejects malformed encodings', function (string $hex): void {
 it('rejects generalized time without UTC designator', function (): void {
     Der::decode("\x18\x0e20261001115829")->generalizedTime();
 })->throws(InvalidTimestampException::class, 'UTC');
+
+it('cuts fractions of a second beyond microseconds', function (): void {
+    expect(Der::decode("\x18\x1720261001115829.1234567Z")->generalizedTime()->format('s.u'))->toBe('29.123456');
+});
+
+it('rejects impossible dates', function (): void {
+    Der::decode("\x18\x0f20261301000000Z")->generalizedTime();
+})->throws(InvalidTimestampException::class);
+
+it('rejects object identifiers that are not minimally encoded', function (): void {
+    Der::decode((string) hex2bin('06032a8003'))->oid();
+})->throws(InvalidTimestampException::class);

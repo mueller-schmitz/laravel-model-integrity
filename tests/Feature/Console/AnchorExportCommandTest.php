@@ -73,5 +73,16 @@ it('exports RFC 3161 proofs as .tsr files that openssl can verify', function ():
         ->expectsOutputToContain('openssl ts -verify')
         ->assertExitCode(0);
 
-    expect(File::get($this->directory.'/00000000000000000003-9610c8b8570e926730acb23681008aef5c9f3b46fe1ec6ea62a2e77a484bfbf4.json.tsr'))->toBe($response);
+    $exported = $this->directory.'/00000000000000000003-9610c8b8570e926730acb23681008aef5c9f3b46fe1ec6ea62a2e77a484bfbf4.json';
+
+    expect(File::get($exported.'.tsr'))->toBe($response);
+
+    // Where the openssl command is available, it must accept the exported files.
+    exec('openssl version 2>&1', $version, $missing);
+
+    if ($missing === 0) {
+        exec(sprintf('openssl ts -verify -in %s -data %s -CAfile %s -untrusted %s 2>&1', escapeshellarg($exported.'.tsr'), escapeshellarg($exported), escapeshellarg($fixtures.'/test-ca.pem'), escapeshellarg($fixtures.'/test-tsa.pem')), $output);
+
+        expect(implode("\n", $output))->toContain('Verification: OK');
+    }
 });

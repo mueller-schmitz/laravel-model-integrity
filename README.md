@@ -414,12 +414,14 @@ ots verify ./audit/00000000000000001234-<digest>.json.ots
 
 A time-stamp authority (TSA) signs that the statement's digest existed at a time. [freetsa.org](https://freetsa.org) is free; a qualified trust service provider under eIDAS gives the time-stamp legal weight in the EU. The time-stamp is there at once, no upgrade needed. The driver needs the PHP extension `openssl`.
 
-The proof is the TSA's complete response. Verification checks the signature over the time-stamp, that it is for the statement's digest (and, if configured, under the required policy), and that the TSA certificate is meant for time stamping and leads to a certificate in `ca_file` – valid at the time of the time-stamp, so proofs stay verifiable after the TSA certificate expired. Revocation (CRL, OCSP) is not checked. The time of the time-stamp is subject to the same checks as Bitcoin attestations (see [What the time proves](#what-the-time-proves)). A missing CA file or extension is reported as `Unverifiable`.
+The proof is the TSA's complete response. Verification checks the signature over the time-stamp, that it has exactly one signer, that it is for the statement's digest (and, if `policy` is set, issued under that policy, which is also requested), and that the TSA certificate is meant for time stamping only (critical extended key usage) and leads to a certificate in `ca_file`, possibly through CA certificates in `intermediates_file` – all valid at the time of the time-stamp, so proofs stay verifiable after the TSA certificate expired. Revocation (CRL, OCSP) and the ESS signing-certificate attribute are not checked; the signer is the certificate the signature names. The time of the time-stamp is subject to the same checks as Bitcoin attestations (see [What the time proves](#what-the-time-proves)). A missing CA file or extension is reported as `Unverifiable`.
 
 ```bash
 php artisan model-integrity:anchor-export 42 ./audit
 openssl ts -verify -in ./audit/<file>.json.tsr -data ./audit/<file>.json -CAfile tsa-ca.pem
 ```
+
+Add `-untrusted <intermediates>` if the TSA certificate is issued by an intermediate CA. `openssl` checks the chain at the current time; once the TSA certificate has expired, add `-attime <time of the time-stamp as Unix time>`.
 
 ### Restoring a backup
 

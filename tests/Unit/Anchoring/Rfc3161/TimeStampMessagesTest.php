@@ -75,3 +75,10 @@ it('rejects responses that are no time-stamp responses', function (string $bytes
     'garbage' => ['garbage'],
     'no status' => [fn () => Der::sequence(Der::null())],
 ])->throws(InvalidTimestampException::class);
+
+it('asks for the configured policy', function (): void {
+    $children = Der::decode((new TimeStampRequest($this->digest, "\x01", '1.2.3.4.5'))->encode())->children();
+
+    expect($children[2]->oid())->toBe('1.2.3.4.5')
+        ->and($children[3]->unsignedBytes())->toBe("\x01");
+});

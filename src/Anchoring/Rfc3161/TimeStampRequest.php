@@ -19,19 +19,21 @@ final readonly class TimeStampRequest
         public string $digest,
         /** big-endian bytes of a non-negative nonce */
         public string $nonce,
+        /** the TSA policy to ask for, as dotted OID */
+        public ?string $policy = null,
     ) {
         if (strlen($digest) !== 32) {
             throw new InvalidArgumentException('A time-stamp request needs a 32-byte SHA-256 digest.');
         }
     }
 
-    public static function for(string $digest): self
+    public static function for(string $digest, ?string $policy = null): self
     {
         // 64 random bits, high bit cleared so the INTEGER needs no padding byte.
         $nonce = random_bytes(8);
         $nonce[0] = chr(ord($nonce[0]) & 0x7F);
 
-        return new self($digest, $nonce);
+        return new self($digest, $nonce, $policy);
     }
 
     public function encode(): string
@@ -39,6 +41,7 @@ final readonly class TimeStampRequest
         return Der::sequence(
             Der::integer(1),
             Der::sequence(Der::sequence(Der::oid(self::SHA256), Der::null()), Der::octetString($this->digest)),
+            $this->policy === null ? '' : Der::oid($this->policy),
             Der::unsignedInteger($this->nonce),
             Der::boolean(true),
         );

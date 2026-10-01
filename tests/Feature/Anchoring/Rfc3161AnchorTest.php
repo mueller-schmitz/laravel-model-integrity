@@ -48,7 +48,7 @@ function rfc3161Driver(string $nonce, ?string $policy = null): Rfc3161Anchor
         $policy,
         5,
         ['Authorization' => 'Bearer secret'],
-        fn (string $digest): TimeStampRequest => new TimeStampRequest($digest, $nonce),
+        fn (string $digest, ?string $policy): TimeStampRequest => new TimeStampRequest($digest, $nonce, $policy),
     );
 }
 

@@ -28,12 +28,12 @@ use RuntimeException;
  */
 class Rfc3161Anchor implements Anchor, ExportsProofs
 {
-    /** @var Closure(string): TimeStampRequest */
+    /** @var Closure(string, ?string): TimeStampRequest */
     private readonly Closure $requests;
 
     /**
      * @param  array<string, string>  $headers  e.g. credentials of a commercial TSA
-     * @param  (Closure(string): TimeStampRequest)|null  $requests  creates the request for a digest
+     * @param  (Closure(string, ?string): TimeStampRequest)|null  $requests  creates the request for a digest and policy
      */
     public function __construct(
         private readonly Factory $http,
@@ -50,7 +50,7 @@ class Rfc3161Anchor implements Anchor, ExportsProofs
 
     public function submit(AnchorStatement $statement): string
     {
-        $request = ($this->requests)((string) hex2bin($statement->digest()));
+        $request = ($this->requests)((string) hex2bin($statement->digest()), $this->policy);
 
         $response = $this->http
             ->withHeaders(['User-Agent' => 'mueller-schmitz/laravel-model-integrity', ...$this->headers])

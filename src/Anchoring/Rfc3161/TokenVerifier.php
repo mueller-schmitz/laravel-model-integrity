@@ -37,16 +37,17 @@ final class TokenVerifier
 
         $this->assertTstInfoContent($token);
 
-        $input = $this->temporaryFile($token);
-        $signers = $this->temporaryFile('');
-        $content = $this->temporaryFile('');
+        $files = [];
 
         try {
+            $input = $files[] = $this->temporaryFile($token);
+            $signers = $files[] = $this->temporaryFile('');
+            $content = $files[] = $this->temporaryFile('');
             $this->openSslErrors();
 
             // NOVERIFY skips OpenSSL's certificate check, which uses the current
             // time and the S/MIME purpose; CertificateChain checks it instead.
-            $valid = openssl_cms_verify($input, OPENSSL_CMS_BINARY | OPENSSL_CMS_NOVERIFY, $signers, [$this->caFile], null, $content, null, null, OPENSSL_ENCODING_DER);
+            $valid = openssl_cms_verify($input, OPENSSL_CMS_BINARY | OPENSSL_CMS_NOVERIFY, $signers, [], null, $content, null, null, OPENSSL_ENCODING_DER);
 
             if ($valid !== true) {
                 throw new InvalidTimestampException('The signature of the time-stamp token is not valid: '.(implode('; ', $this->openSslErrors()) ?: 'unknown error'));
@@ -55,16 +56,17 @@ final class TokenVerifier
             $info = TstInfo::decode((string) file_get_contents($content));
             $signer = (string) file_get_contents($signers);
         } finally {
-            @unlink($input);
-            @unlink($signers);
-            @unlink($content);
+            foreach ($files as $file) {
+                @unlink($file);
+            }
         }
 
-        if (preg_match('/-----BEGIN CERTIFICATE-----.+?-----END CERTIFICATE-----/s', $signer, $match) !== 1) {
-            throw new InvalidTimestampException('The time-stamp token contains no signing certificate.');
+        // RFC 3161: one signer, the TSA. The output holds one certificate per signer.
+        if (preg_match_all('/-----BEGIN CERTIFICATE-----.+?-----END CERTIFICATE-----/s', $signer, $matches) !== 1) {
+            throw new InvalidTimestampException('A time-stamp token must have exactly one signer with its certificate.');
         }
 
-        (new CertificateChain($this->caFile, $this->intermediatesFile))->verify($match[0], $info->genTime);
+        (new CertificateChain($this->caFile, $this->intermediatesFile))->verify($matches[0][0], $info->genTime);
 
         return $info;
     }

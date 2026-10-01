@@ -98,8 +98,16 @@ final readonly class DerNode
 
         $arcs = [];
         $value = 0;
+        $startOfArc = true;
 
         foreach (str_split($content) as $byte) {
+            // DER encodes each arc minimally: no leading 0x80 bytes.
+            if ($startOfArc && ord($byte) === 0x80) {
+                throw new InvalidTimestampException('Object identifier is not minimally encoded.');
+            }
+
+            $startOfArc = (ord($byte) & 0x80) === 0;
+
             if ($value > PHP_INT_MAX >> 7) {
                 throw new InvalidTimestampException('Object identifier arc too large.');
             }
@@ -122,17 +130,18 @@ final readonly class DerNode
     {
         $content = $this->expect(Der::GENERALIZED_TIME)->content;
 
-        // DER requires UTC ("Z") and no trailing zeros in fractions; accept fractions of any length.
-        if (preg_match('/^(\d{14})(?:\.(\d{1,6}))?Z$/', $content, $match) !== 1) {
+        // DER requires UTC ("Z"); fractions may have any precision, microseconds are kept.
+        if (preg_match('/^(\d{14})(?:\.(\d+))?Z$/', $content, $match) !== 1) {
             throw new InvalidTimestampException('Expected a generalized time in UTC.');
         }
 
         $time = CarbonImmutable::createFromFormat('YmdHis', $match[1], 'UTC');
 
-        if ($time === null) {
+        // createFromFormat() rolls impossible dates over (month 13 becomes January).
+        if ($time === null || $time->format('YmdHis') !== $match[1]) {
             throw new InvalidTimestampException('Invalid generalized time.');
         }
 
-        return $time->setMicrosecond((int) str_pad($match[2] ?? '0', 6, '0'));
+        return $time->setMicrosecond((int) str_pad(substr($match[2] ?? '0', 0, 6), 6, '0'));
     }
 }

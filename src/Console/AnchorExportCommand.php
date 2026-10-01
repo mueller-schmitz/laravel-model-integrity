@@ -55,7 +55,7 @@ class AnchorExportCommand extends Command
 
                 match ($driver->proofFileExtension()) {
                     'ots' => $this->line("  check with: ots verify {$path}"),
-                    'tsr' => $this->line("  check with: openssl ts -verify -in {$path} -data {$directory}/{$statement->fileName()} -CAfile <CA certificates of the TSA>"),
+                    'tsr' => $this->line("  check with: openssl ts -verify -in {$path} -data {$directory}/{$statement->fileName()} -CAfile <CA certificates of the TSA> [-untrusted <intermediate certificates>] [-attime <time of the time-stamp as Unix time>]"),
                     default => null,
                 };
             }

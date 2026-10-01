@@ -64,3 +64,57 @@ it('checks validity at the time of the time-stamp, not now', function (string $a
     'before validity' => ['2000-01-01', false],
     'after validity' => ['2200-01-01', false],
 ]);
+
+it('requires a critical extended key usage with time stamping as the only purpose', function (string $certificate): void {
+    (new CertificateChain($this->fixtures.'/test-ca.pem'))->verify((string) file_get_contents($this->fixtures.'/'.$certificate), CarbonImmutable::now());
+})->with([
+    'not critical' => ['test-noncritical.pem'],
+    'several purposes' => ['test-multi.pem'],
+])->throws(InvalidTimestampException::class, 'time stamping');
+
+it('follows a chain through an intermediate CA', function (): void {
+    $verifier = new TokenVerifier($this->fixtures.'/test-ca.pem', $this->fixtures.'/test-sub.pem');
+
+    expect($verifier->verify(tokenOf($this->fixtures.'/sub.tsr'))->serialNumber)->not->toBe('')
+        ->and(fn () => (new TokenVerifier($this->fixtures.'/test-ca.pem'))->verify(tokenOf($this->fixtures.'/sub.tsr')))
+        ->toThrow(InvalidTimestampException::class, 'certificate');
+});
+
+it('does not accept an intermediate certificate that is no CA', function (): void {
+    (new TokenVerifier($this->fixtures.'/test-ca.pem', $this->fixtures.'/test-nonca.pem'))->verify(tokenOf($this->fixtures.'/nonca.tsr'));
+})->throws(InvalidTimestampException::class, 'certificate');
+
+it('does not accept a self-signed TSA with the name of the trusted CA', function (): void {
+    (new TokenVerifier($this->fixtures.'/test-ca.pem'))->verify(tokenOf($this->fixtures.'/self.tsr'));
+})->throws(InvalidTimestampException::class, 'certificate');
+
+it('does not accept signed content that is no TSTInfo', function (): void {
+    (new TokenVerifier($this->fixtures.'/test-ca.pem'))->verify((string) file_get_contents($this->fixtures.'/data-token.der'));
+})->throws(InvalidTimestampException::class, 'TSTInfo');
+
+it('requires exactly one signer', function (): void {
+    (new TokenVerifier($this->fixtures.'/test-ca.pem'))->verify((string) file_get_contents($this->fixtures.'/two-signers.der'));
+})->throws(InvalidTimestampException::class, 'one signer');
+
+it('tries every root with the right key, e.g. after a root was renewed', function (): void {
+    // The first root has the same key but was not valid yet at the time of the time-stamp.
+    $roots = tempnam(sys_get_temp_dir(), 'mi-roots');
+    file_put_contents($roots, file_get_contents($this->fixtures.'/test-ca-later.pem').file_get_contents($this->fixtures.'/test-ca.pem'));
+
+    try {
+        expect((new TokenVerifier($roots))->verify(tokenOf($this->fixtures.'/test.tsr'))->serialNumber)->toBe("\x02");
+    } finally {
+        unlink($roots);
+    }
+});
+
+it('reports an unusable CA file as a configuration problem, not as an invalid token', function (): void {
+    $broken = tempnam(sys_get_temp_dir(), 'mi-ca');
+    file_put_contents($broken, "-----BEGIN CERTIFICATE-----\nbroken\n-----END CERTIFICATE-----\n");
+
+    try {
+        (new TokenVerifier($broken))->verify(tokenOf($this->fixtures.'/test.tsr'));
+    } finally {
+        unlink($broken);
+    }
+})->throws(RuntimeException::class);
