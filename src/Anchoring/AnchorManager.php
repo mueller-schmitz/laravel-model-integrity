@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace MuellerSchmitz\ModelIntegrity\Anchoring;
 
+use Illuminate\Http\Client\Factory;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Manager;
 use MuellerSchmitz\ModelIntegrity\Anchoring\Contracts\Anchor;
 use MuellerSchmitz\ModelIntegrity\Anchoring\Drivers\DiskAnchor;
 use MuellerSchmitz\ModelIntegrity\Anchoring\Drivers\OpenTimestampsAnchor;
+use MuellerSchmitz\ModelIntegrity\Anchoring\Drivers\Rfc3161Anchor;
 use MuellerSchmitz\ModelIntegrity\Anchoring\OpenTimestamps\CalendarClient;
 use MuellerSchmitz\ModelIntegrity\Anchoring\OpenTimestamps\Codec;
 use MuellerSchmitz\ModelIntegrity\Anchoring\OpenTimestamps\EsploraClient;
@@ -69,6 +71,41 @@ class AnchorManager extends Manager
             $this->container->make(EsploraClient::class),
             $calendars,
             Config::integer('model-integrity.anchors.opentimestamps.min_calendars', 2),
+        );
+    }
+
+    protected function createRfc3161Driver(): Anchor
+    {
+        $url = config('model-integrity.anchors.rfc3161.url');
+        $caFile = config('model-integrity.anchors.rfc3161.ca_file');
+        $intermediates = config('model-integrity.anchors.rfc3161.intermediates_file');
+        $policy = config('model-integrity.anchors.rfc3161.policy');
+        $headers = [];
+
+        if (! is_string($url) || ! str_starts_with($url, 'https://')) {
+            throw IntegrityConfigurationException::invalidConfig('model-integrity.anchors.rfc3161.url', 'the https:// URL of a time-stamp authority');
+        }
+
+        if (! is_string($caFile) || $caFile === '') {
+            throw IntegrityConfigurationException::invalidConfig('model-integrity.anchors.rfc3161.ca_file', 'the path of the PEM file with the CA certificates of the time-stamp authority');
+        }
+
+        foreach (Config::array('model-integrity.anchors.rfc3161.headers', []) as $name => $value) {
+            if (! is_string($name) || ! is_string($value)) {
+                throw IntegrityConfigurationException::invalidConfig('model-integrity.anchors.rfc3161.headers', 'an array of header names and values');
+            }
+
+            $headers[$name] = $value;
+        }
+
+        return new Rfc3161Anchor(
+            $this->container->make(Factory::class),
+            $url,
+            $caFile,
+            is_string($intermediates) && $intermediates !== '' ? $intermediates : null,
+            is_string($policy) && $policy !== '' ? $policy : null,
+            Config::integer('model-integrity.anchors.rfc3161.timeout', 10),
+            $headers,
         );
     }
 

@@ -15,6 +15,7 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 - Custom anchor drivers via `AnchorManager::extend()`
 - OpenTimestamps anchor driver: own implementation of the `.ots` format, submits to four public calendars (at least two must answer), checks Bitcoin attestations against block headers from an Esplora API (blockstream.info by default, configurable); unreachable block source is reported as `Unverifiable`
 - `model-integrity:anchor-upgrade` completes pending proofs and stores them as new proof rows; only configured calendars are asked
+- RFC 3161 anchor driver for time-stamp authorities (e.g. freetsa.org or a qualified trust service provider): own DER encoding of requests and responses, nonce and digest checks, signature check via ext-openssl and a certificate chain check at the time of the time-stamp; `ext-openssl` is suggested
 - `model-integrity:anchor-export` writes an anchor's statement and proof files, e.g. for `ots verify`
 - Time checks for attested proofs: attested or still pending more than `anchors.max_delay_hours` (72) after the versions they attest were recorded (or after `anchors.since` for versions recorded before anchoring was enabled), or versions recorded after their anchor, are reported as `AnchorMismatch`
 - Append-only tables `integrity_anchors` and `integrity_anchor_proofs` with triggers and privileges; the `anchors` head row serializes anchor runs

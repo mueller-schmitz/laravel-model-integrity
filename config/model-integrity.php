@@ -97,6 +97,18 @@ return [
             'esplora_url' => env('MODEL_INTEGRITY_ESPLORA_URL', 'https://blockstream.info/api'),
         ],
 
+        // An RFC 3161 time-stamp authority, e.g. https://freetsa.org/tsr (free)
+        // or a qualified trust service provider. ca_file is the PEM file with
+        // the CA certificates the TSA certificate must lead to. Needs ext-openssl.
+        'rfc3161' => [
+            'url' => env('MODEL_INTEGRITY_TSA_URL'),
+            'ca_file' => env('MODEL_INTEGRITY_TSA_CA_FILE'),
+            'intermediates_file' => null,
+            'policy' => null,
+            'timeout' => 10,
+            'headers' => [],
+        ],
+
         // A proof attested (or still pending) later than this after the
         // versions it attests were recorded proves nothing about their time.
         'max_delay_hours' => 72,
