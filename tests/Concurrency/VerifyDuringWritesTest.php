@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityChecker;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityError;
@@ -64,3 +65,34 @@ it('checkAll passes while another process records versions', function (): void {
 
     expect(messages(app(IntegrityChecker::class), 'checkAll'))->toBe([]);
 });
+
+it('checkAll and checkAnchors pass while another process records and anchors versions', function (string $method): void {
+    $root = sys_get_temp_dir().'/mi-anchors-'.bin2hex(random_bytes(4));
+    config([
+        'filesystems.disks.anchors' => ['driver' => 'local', 'root' => $root],
+        'model-integrity.anchors' => ['drivers' => ['disk'], 'disk' => ['disk' => 'anchors', 'path' => 'statements']],
+    ]);
+    $sharedId = (string) $this->shared->getKey();
+    $triggered = false;
+
+    // The new anchor covers versions the check's read view does not contain.
+    DB::listen(function (QueryExecuted $query) use (&$triggered, $sharedId, $root): void {
+        if ($triggered || ! str_contains($query->sql, 'integrity_')) {
+            return;
+        }
+
+        $triggered = true;
+
+        foreach ([['models', '3'], ['anchor', '1']] as [$mode, $writes]) {
+            (new Process([PHP_BINARY, __DIR__.'/worker.php', $mode, '1', $writes, $sharedId], env: ['MI_ANCHORS_ROOT' => $root], timeout: 120))->mustRun();
+        }
+    });
+
+    try {
+        expect(messages(app(IntegrityChecker::class), $method))->toBe([])
+            ->and($triggered)->toBeTrue()
+            ->and(File::allFiles($root))->toHaveCount(1);
+    } finally {
+        File::deleteDirectory($root);
+    }
+})->with(['checkAll', 'checkAnchors']);

@@ -8,6 +8,7 @@ use Illuminate\Console\Command;
 use InvalidArgumentException;
 use MuellerSchmitz\ModelIntegrity\Anchoring\Anchorer;
 use MuellerSchmitz\ModelIntegrity\Exceptions\AnchorFailedException;
+use MuellerSchmitz\ModelIntegrity\Exceptions\ChainGapException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
 
 class AnchorCommand extends Command
@@ -28,7 +29,7 @@ class AnchorCommand extends Command
             $this->error($e->getMessage());
 
             return self::INVALID;
-        } catch (AnchorFailedException $e) {
+        } catch (AnchorFailedException|ChainGapException $e) {
             $this->error($e->getMessage());
 
             return self::FAILURE;

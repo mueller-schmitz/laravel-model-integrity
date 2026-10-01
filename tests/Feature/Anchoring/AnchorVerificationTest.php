@@ -145,7 +145,7 @@ it('detects a rewritten chain whose anchors were recomputed as well', function (
     $result = $this->checker->checkAnchors();
 
     expect(anchorViolations($result))->toBe(['anchor_mismatch'])
-        ->and($result->errors()->pluck('message')->implode("\n"))->toContain('does not match the statement');
+        ->and($result->errors()->pluck('message')->implode("\n"))->toContain('is not the file of this statement');
 });
 
 it('detects a rewritten chain whose anchors were deleted', function (): void {

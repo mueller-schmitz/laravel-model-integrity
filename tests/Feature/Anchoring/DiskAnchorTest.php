@@ -41,6 +41,16 @@ it('rejects a statement that differs from the stored one', function (): void {
     $verification = $this->driver->verify($rewritten, $proof);
 
     expect($verification->status)->toBe(AnchorStatus::Invalid)
+        ->and($verification->message)->toContain('not the file of this statement');
+});
+
+it('rejects a statement file whose content was changed', function (): void {
+    $proof = $this->driver->submit($this->statement);
+    Storage::disk('anchors')->put($proof, str_replace('"to_sequence":3', '"to_sequence":4', $this->statement->canonical()));
+
+    $verification = $this->driver->verify($this->statement, $proof);
+
+    expect($verification->status)->toBe(AnchorStatus::Invalid)
         ->and($verification->message)->toContain('does not match');
 });
 
@@ -84,4 +94,23 @@ it('lists an unreadable statement file without a statement', function (): void {
     expect($listed)->toHaveCount(1)
         ->and($listed[0]['statement'])->toBeNull()
         ->and($listed[0]['location'])->toContain('statements/');
+});
+
+it('rejects a proof that points to another file, even with the right content', function (): void {
+    // e.g. a copy uploaded through the application to the same disk
+    $proof = $this->driver->submit($this->statement);
+    Storage::disk('anchors')->put('uploads/copy.json', (string) Storage::disk('anchors')->get($proof));
+
+    $verification = $this->driver->verify($this->statement, 'uploads/copy.json');
+
+    expect($verification->status)->toBe(AnchorStatus::Invalid)
+        ->and($verification->message)->toContain('not the file of this statement');
+});
+
+it('keeps verifying proofs under a former path after the path was changed', function (): void {
+    $proof = $this->driver->submit($this->statement);
+    config(['model-integrity.anchors.disk.path' => 'after-restore']);
+    app(AnchorManager::class)->forgetDrivers();
+
+    expect(app(AnchorManager::class)->driver('disk')->verify($this->statement, $proof)->status)->toBe(AnchorStatus::Confirmed);
 });

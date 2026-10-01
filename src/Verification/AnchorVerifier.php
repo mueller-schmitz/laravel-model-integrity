@@ -38,7 +38,10 @@ class AnchorVerifier
         private readonly VersionHashes $versions,
     ) {}
 
-    public function inspect(): IntegrityResult
+    /**
+     * @param  list<array{string, AnchorStatement|null}>  $listed  statements listed by the drivers, see listedStatements()
+     */
+    public function inspect(array $listed): IntegrityResult
     {
         $errors = [];
         $count = 0;
@@ -86,7 +89,7 @@ class AnchorVerifier
             $errors[] = $this->error(IntegrityErrorType::AnchorMismatch, 'The anchors head does not match the last anchor.', null);
         }
 
-        foreach ($this->listedStatements() as [$location, $statement]) {
+        foreach ($listed as [$location, $statement]) {
             if ($statement === null) {
                 $errors[] = $this->error(IntegrityErrorType::AnchorMismatch, "The anchor statement at [{$location}] cannot be read.", null);
             } elseif (! isset($known[$statement->digest()]) && ($problem = $this->rangeProblem($statement, $maxSequence)) !== null) {
@@ -174,19 +177,29 @@ class AnchorVerifier
     }
 
     /**
-     * @return iterable<array{string, AnchorStatement|null}>
+     * The statements the enabled drivers hold. Call this before the read
+     * transaction starts: a statement is only written after the versions it
+     * covers were committed, so they are visible in the later read view. A
+     * statement listed after the read view was fixed could cover versions the
+     * view does not contain, and would be reported as a truncated chain.
+     *
+     * @return list<array{string, AnchorStatement|null}>
      */
-    private function listedStatements(): iterable
+    public function listedStatements(): array
     {
+        $listed = [];
+
         foreach ($this->drivers->enabledDrivers() as $name) {
             $driver = $this->drivers->driver($name);
 
             if ($driver instanceof ListsStatements) {
                 foreach ($driver->statements() as $entry) {
-                    yield [$entry['location'], $entry['statement']];
+                    $listed[] = [$entry['location'], $entry['statement']];
                 }
             }
         }
+
+        return $listed;
     }
 
     private function maxSequence(): int

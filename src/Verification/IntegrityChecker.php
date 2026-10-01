@@ -147,7 +147,9 @@ class IntegrityChecker
      */
     public function checkAll(bool $stopOnFirstFailure = false, ?Closure $progress = null): IntegrityResult
     {
-        $result = $this->consistently(function () use ($stopOnFirstFailure, $progress): IntegrityResult {
+        $listed = $this->anchors->listedStatements();
+
+        $result = $this->consistently(function () use ($stopOnFirstFailure, $progress, $listed): IntegrityResult {
             $progress?->__invoke('Checking the global chain');
             $chain = $this->inspectChain();
 
@@ -158,7 +160,7 @@ class IntegrityChecker
             $results = [$chain];
 
             $progress?->__invoke('Checking the anchors');
-            $results[] = $this->anchors->inspect();
+            $results[] = $this->anchors->inspect($listed);
 
             if ($stopOnFirstFailure && end($results)->fails()) {
                 return IntegrityResult::combine($results, $chain->checkedVersions());
@@ -203,7 +205,9 @@ class IntegrityChecker
      */
     public function checkAnchors(): IntegrityResult
     {
-        $result = $this->consistently(fn (): IntegrityResult => $this->anchors->inspect());
+        // Listed before the read view is fixed, see AnchorVerifier::listedStatements().
+        $listed = $this->anchors->listedStatements();
+        $result = $this->consistently(fn (): IntegrityResult => $this->anchors->inspect($listed));
 
         $this->dispatchOnFailure($result, null);
 

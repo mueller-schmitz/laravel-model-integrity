@@ -11,11 +11,13 @@ use MuellerSchmitz\ModelIntegrity\Anchoring\AnchorVerification;
 use MuellerSchmitz\ModelIntegrity\Anchoring\Contracts\Anchor;
 use MuellerSchmitz\ModelIntegrity\Anchoring\MerkleTree;
 use MuellerSchmitz\ModelIntegrity\Exceptions\AnchorFailedException;
+use MuellerSchmitz\ModelIntegrity\Exceptions\ChainGapException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\ImmutableModelException;
 use MuellerSchmitz\ModelIntegrity\Models\AnchorProof;
 use MuellerSchmitz\ModelIntegrity\Models\AnchorRecord;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
+use MuellerSchmitz\ModelIntegrity\Verification\IntegrityChecker;
 
 /**
  * A driver that records what it was given, and can be told to fail.
@@ -161,7 +163,7 @@ it('refuses to anchor a chain with a sequence gap', function (): void {
     DB::table('integrity_versions')->where('sequence', 2)->delete();
 
     $this->anchorer->anchor();
-})->throws(RuntimeException::class, 'model-integrity:verify');
+})->throws(ChainGapException::class, 'model-integrity:verify');
 
 it('rejects unknown drivers before anchoring', function (): void {
     createInvoices(1);
@@ -174,3 +176,21 @@ it('rejects unknown drivers before anchoring', function (): void {
 it('refuses to create anchors through Eloquent', function (): void {
     AnchorRecord::query()->create(['anchor_format' => 1]);
 })->throws(ImmutableModelException::class);
+
+it('works with a config published before anchors existed', function (): void {
+    // mergeConfigFrom() merges only the top level: a published "tables" array replaces the package's.
+    config(['model-integrity.tables' => ['versions' => 'integrity_versions', 'heads' => 'integrity_heads', 'files' => 'integrity_files']]);
+    createInvoices(1);
+
+    expect($this->anchorer->anchor()->anchor)->not->toBeNull()
+        ->and(app(IntegrityChecker::class)->checkAnchors()->passes())->toBeTrue();
+});
+
+it('names the missing version when the chain has a gap', function (): void {
+    createInvoices(3);
+    DB::table('integrity_versions')->where('sequence', 2)->delete();
+
+    $this->artisan('model-integrity:anchor')
+        ->expectsOutputToContain('Version 2 of the global chain is missing')
+        ->assertExitCode(1);
+});

@@ -349,7 +349,19 @@ Anchors are linked: each one contains the digest of the previous one. If a drive
 
 The disk driver writes every statement as a file named `{to_sequence}-{digest}.json`; the SHA-256 hash of the file is the digest. The anchor only helps if whoever can change the database cannot change this disk: use storage on another system with its own credentials, ideally write-once (for example an S3 bucket with object lock in compliance mode). The default `local` disk is only suitable for trying it out.
 
-Verification lists the files on the disk and checks each statement against the versions it covers, whether or not the database still contains that anchor. Deleting the anchor rows together with a rewritten chain is therefore detected as well. A statement left over by a failed run that matches the versions is not reported.
+Verification lists the files on the disk and checks each statement against the versions it covers, whether or not the database still contains that anchor. Deleting the anchor rows together with a rewritten chain is therefore detected as well. A statement left over by a failed run that matches the versions is not reported. Listing reads every statement file on each verification; on object storage that is one request per anchor.
+
+### Restoring a backup
+
+Restoring the database to an earlier state is, from the anchors' point of view, a cut-off chain: statements on the anchor disk attest versions the database no longer has (`TruncatedChain`), and once new versions reuse those sequence numbers, `AnchorMismatch`. This is intended – the anchors show that history was lost. To continue with a passing verification:
+
+1. Keep the existing statement files as evidence of what was lost (with object lock they cannot be removed anyway) and document the restore.
+2. Point `anchors.disk.path` to a new, empty directory on the same disk. The anchors in the restored database still reference their files under the old path, so their proofs keep verifying.
+3. Run `model-integrity:anchor`.
+
+### Isolation on PostgreSQL
+
+Anchor runs wait for each other on the `anchors` head row. With the default `READ COMMITTED` isolation the waiting run then continues; if the connection is configured for `REPEATABLE READ` or `SERIALIZABLE`, PostgreSQL aborts it with a serialization error instead. Use `withoutOverlapping()` in the scheduler, or keep the default isolation for the anchor command.
 
 ### Custom drivers
 

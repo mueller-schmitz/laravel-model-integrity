@@ -12,10 +12,10 @@ use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use MuellerSchmitz\ModelIntegrity\Anchoring\Contracts\Anchor;
 use MuellerSchmitz\ModelIntegrity\Exceptions\AnchorFailedException;
+use MuellerSchmitz\ModelIntegrity\Exceptions\ChainGapException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
 use MuellerSchmitz\ModelIntegrity\Models\AnchorRecord;
 use MuellerSchmitz\ModelIntegrity\Recording\ChainName;
-use RuntimeException;
 use Throwable;
 
 /**
@@ -44,6 +44,7 @@ class Anchorer
      * @throws AnchorFailedException when every driver failed; nothing is kept then
      * @throws InvalidArgumentException for an unknown driver
      * @throws IntegrityConfigurationException without drivers or anchors head
+     * @throws ChainGapException when a version of the range is missing
      */
     public function anchor(?array $driverNames = null): AnchorRun
     {
@@ -153,7 +154,7 @@ class Anchorer
         }
 
         if ($expected !== $to + 1) {
-            throw new RuntimeException("Version {$expected} of the global chain is missing; nothing was anchored. Run model-integrity:verify.");
+            throw ChainGapException::missingVersion($expected);
         }
     }
 
@@ -167,6 +168,7 @@ class Anchorer
 
     private function table(string $name): string
     {
-        return Config::string("model-integrity.tables.{$name}");
+        // A config published before a table existed lacks its key.
+        return Config::string("model-integrity.tables.{$name}", "integrity_{$name}");
     }
 }
