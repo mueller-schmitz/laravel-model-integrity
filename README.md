@@ -51,7 +51,7 @@ php artisan migrate
 php artisan model-integrity:grants    # use the same options as at installation
 ```
 
-Run the printed statements as an administrative user, then configure an anchor disk and schedule `model-integrity:anchor` (see [Anchors](#anchors)). The first anchor covers all existing versions.
+Run the printed statements as an administrative user, then configure an anchor disk and schedule `model-integrity:anchor` (see [Anchors](#anchors)). The first anchor covers all existing versions; set `MODEL_INTEGRITY_ANCHORS_SINCE` to the upgrade date so that the time checks of attested proofs count those versions from then.
 
 ### Upgrading from 0.1
 
@@ -365,6 +365,7 @@ Verification lists the files on the disk and checks each statement against the v
         'esplora_url' => env('MODEL_INTEGRITY_ESPLORA_URL', 'https://blockstream.info/api'),
     ],
     'max_delay_hours' => 72,
+    'since' => env('MODEL_INTEGRITY_ANCHORS_SINCE'), // e.g. "2026-10-01" when upgrading
 ],
 ```
 
@@ -378,10 +379,12 @@ Verification evaluates the proof and checks each Bitcoin attestation against the
 
 A Bitcoin attestation proves that the statement existed when the block was mined. A chain rewritten later can only get fresh proofs, so verification also requires:
 
-- the proof was attested at most `max_delay_hours` after the anchor was created, and a proof still pending after that time is reported;
+- the proof was attested at most `max_delay_hours` after the versions it attests were recorded (their `created_at` is part of their hash and thereby anchored); a proof still pending after that time is reported as well;
 - every version an anchor attests was recorded before the anchor (10 minutes of clock difference between servers are tolerated).
 
-Whoever rewrites old history therefore also has to move every version and anchor timestamp to the time of the forgery. The rewritten history then claims that everything was recorded recently, which other records (documents, emails, backups) contradict. The package cannot detect that on its own; OpenTimestamps alone does not protect versions that are newer than the last confirmed anchor.
+The time of the anchor row itself is not covered by any hash and is not relied on. Whoever rewrites old history gets only fresh proofs, which are too late for the recorded times – unless every rewritten version's `created_at` is moved to the time of the forgery as well. The rewritten history then claims that everything was recorded recently, which other records (documents, emails, backups) contradict; the package cannot detect that on its own. OpenTimestamps does not protect versions that are newer than the last confirmed anchor.
+
+Versions recorded before anchoring was enabled cannot have been attested in time. Set `anchors.since` to the date you enabled anchoring (for example when upgrading an application that already has versions): such versions then count from that date, so their first anchor must be attested within `max_delay_hours` after it. A scheduler outage longer than `max_delay_hours` is reported, because the versions recorded during it were not attested in time.
 
 #### Checking without this package
 

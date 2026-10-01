@@ -16,7 +16,7 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 - OpenTimestamps anchor driver: own implementation of the `.ots` format, submits to four public calendars (at least two must answer), checks Bitcoin attestations against block headers from an Esplora API (blockstream.info by default, configurable); unreachable block source is reported as `Unverifiable`
 - `model-integrity:anchor-upgrade` completes pending proofs and stores them as new proof rows; only configured calendars are asked
 - `model-integrity:anchor-export` writes an anchor's statement and proof files, e.g. for `ots verify`
-- Time checks for attested proofs: attested or still pending more than `anchors.max_delay_hours` (72) after the anchor, or versions recorded after their anchor, are reported as `AnchorMismatch`
+- Time checks for attested proofs: attested or still pending more than `anchors.max_delay_hours` (72) after the versions they attest were recorded (or after `anchors.since` for versions recorded before anchoring was enabled), or versions recorded after their anchor, are reported as `AnchorMismatch`
 - Append-only tables `integrity_anchors` and `integrity_anchor_proofs` with triggers and privileges; the `anchors` head row serializes anchor runs
 - Error type `AnchorMismatch`; `checkAnchors()`, also part of `checkAll()` and `model-integrity:verify`. An anchor beyond the end of the chain is reported as `TruncatedChain`
 
