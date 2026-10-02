@@ -529,20 +529,24 @@ The export is a directory an auditor can check without this package – for exam
 | File | Content |
 |---|---|
 | `index.xml` | Description of the CSV tables in the GDPdU description standard, read by audit software such as IDEA |
-| `versions.csv` | Every version: chain fields, the snapshot as hashed and, unless `--no-reveal`, the snapshot with personal data decrypted (empty once shredded) |
+| `versions.csv` | Every version: chain fields, the snapshot as hashed and, unless `--no-reveal`, the snapshot with personal data decrypted (`null` where the key was shredded) |
 | `versions.jsonl` | The exact envelope of every version, to recompute its hash |
 | `anchors.csv`, `anchor_proofs.csv`, `proofs/` | Anchors, their statements and proof files (`.ots`, `.tsr`) |
 | `inclusion_proofs.csv` | A Merkle inclusion proof (RFC 6962) of every exported version in its anchor |
-| `files.csv` | Stored files |
-| `report.json`, `report.html` | The verification result (`checkAll()`, with `--files` also the file contents) |
+| `files.csv` | Metadata of the stored files (the files themselves are not exported) |
+| `report.json`, `report.html` | The verification result (`checkAll()`, with `--files` also the file contents), the global sequence the export covers and data that could not be exported as stored |
 | `SPEC.md` | The hash, anchor and inclusion proof formats, with a script to recompute every hash |
 | `SHA256SUMS` | Checksums of all files (`sha256sum -c SHA256SUMS`) |
 
-A period (`--from`, `--to`, UTC, by the time a version was recorded) or a model (`--model`) exports only those versions; their anchors are exported in full, and the inclusion proofs make each exported version checkable without the others. Versions newer than the last anchor have no inclusion proof. The directory must be empty. The command exits with `1` if the verification found violations – the export is written anyway – and with `2` if it cannot be written.
+A period (`--from`, `--to`: a date covers the whole day in UTC, a date with time and offset is taken as given) or a model (`--model`) exports only those versions; their anchors are exported in full, and the inclusion proofs make each exported version checkable without the others. Versions newer than the last anchor have no inclusion proof.
+
+Everything is read in one consistent view, up to the global head at the start of the export (named in the report), so versions recorded meanwhile are not half included. Tampered rows do not stop the export: they are exported as stored and listed in the report. The directory must not exist or be empty; the export is written next to it and moved into place when complete, so a failed export leaves nothing behind. The command exits with `1` if the verification found violations or data could not be exported as stored – the export is written anyway – and with `2` if it cannot be written.
+
+The export contains personal data in plain text unless `--no-reveal`: it is created readable for its owner only (0700/0600). Hand it over on a protected medium and delete it when the audit is done. Set `model-integrity.export.supplier` (name and location of the company) for the `index.xml`.
 
 **GDPdU DTD.** The standard requires `gdpdu-01-03-2019.dtd` next to `index.xml`. It is published by CaseWare (formerly Audicon) without a license notice, so it is not part of this package. Download it from [caseware.com/de/beschreibungsstandard](https://www.caseware.com/de/beschreibungsstandard) and set `MODEL_INTEGRITY_GDPDU_DTD` to its path, or let the command fetch it with `--fetch-dtd` (needs `ext-zip`). Only the unchanged published file is accepted (checked by its SHA-256). `--without-dtd` writes the export without it.
 
-**GDPdU limits.** The CSV files are UTF-8 with `;`, CRLF and a header line. The standard does not define line breaks in fields, quotes inside text or empty values: line breaks are replaced by a space, quotes are doubled, and empty fields mean no value. Times are exported as text marked as time (standard 1.6), timestamps additionally as ISO 8601 with microseconds. `index.xml` is validated against the DTD in the test suite; the import into IDEA itself has not been tested.
+**GDPdU limits.** The CSV files are UTF-8 with `;`, CRLF and a header line. The standard does not define line breaks in fields, quotes inside text or empty values: line breaks are replaced by a space, quotes are doubled, and empty fields mean no value. Times are exported as text marked as time (standard 1.6), timestamps additionally as ISO 8601 with microseconds. `index.xml` is validated against the DTD in CI; the import into IDEA itself has not been tested.
 
 **Procedure documentation.** `php artisan vendor:publish --tag=model-integrity-docs` publishes a German template of the procedure documentation (Verfahrensdokumentation) for the part of your procedure this package covers.
 

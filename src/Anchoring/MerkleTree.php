@@ -62,20 +62,44 @@ class MerkleTree
     /**
      * The audit path of a leaf (RFC 6962, section 2.1.1): the sibling hashes
      * from the leaf up to the root, which prove the leaf's inclusion without
-     * the other leaves. Holds all leaves of the tree in memory.
+     * the other leaves. Holds all leaves of the tree in memory; for many
+     * paths of one tree use levels().
      *
      * @param  list<string>  $hashes  SHA-256 hashes in lowercase hex, in order
      * @return list<string> lowercase hex, from the leaf up
      */
     public function auditPath(array $hashes, int $index): array
     {
-        if ($index < 0 || $index >= count($hashes)) {
-            throw new InvalidArgumentException("Leaf {$index} is not part of a tree of ".count($hashes).' leaves.');
+        return $this->auditPaths($hashes, [$index])[$index];
+    }
+
+    /**
+     * Audit paths of several leaves of one tree, built in one pass.
+     *
+     * @param  list<string>  $hashes  SHA-256 hashes in lowercase hex, in order
+     * @param  list<int>  $indices
+     * @return array<int, list<string>> by leaf index
+     */
+    public function auditPaths(array $hashes, array $indices): array
+    {
+        $levels = $this->levels($hashes);
+        $paths = [];
+
+        foreach ($indices as $index) {
+            $paths[$index] = $levels->path($index);
         }
 
-        $leaves = array_map(fn (string $hash): string => hash('sha256', "\x00".$this->binary($hash), true), $hashes);
+        return $paths;
+    }
 
-        return array_map(bin2hex(...), $this->path($index, $leaves));
+    /**
+     * The whole tree, to read audit paths from.
+     *
+     * @param  list<string>  $hashes  SHA-256 hashes in lowercase hex, in order
+     */
+    public function levels(array $hashes): MerkleLevels
+    {
+        return MerkleLevels::build(array_map(fn (string $hash): string => hash('sha256', "\x00".$this->binary($hash), true), $hashes));
     }
 
     /**
@@ -117,47 +141,6 @@ class MerkleTree
         }
 
         return $sn === 0 && hash_equals($root, bin2hex($result));
-    }
-
-    /**
-     * @param  list<string>  $leaves  binary leaf hashes
-     * @return list<string> binary sibling hashes
-     */
-    private function path(int $index, array $leaves): array
-    {
-        $count = count($leaves);
-
-        if ($count === 1) {
-            return [];
-        }
-
-        $split = 1;
-        while ($split * 2 < $count) {
-            $split *= 2;
-        }
-
-        return $index < $split
-            ? [...$this->path($index, array_slice($leaves, 0, $split)), $this->subtree(array_slice($leaves, $split))]
-            : [...$this->path($index - $split, array_slice($leaves, $split)), $this->subtree(array_slice($leaves, 0, $split))];
-    }
-
-    /**
-     * @param  list<string>  $leaves  binary leaf hashes
-     */
-    private function subtree(array $leaves): string
-    {
-        $count = count($leaves);
-
-        if ($count === 1) {
-            return $leaves[0];
-        }
-
-        $split = 1;
-        while ($split * 2 < $count) {
-            $split *= 2;
-        }
-
-        return $this->node($this->subtree(array_slice($leaves, 0, $split)), $this->subtree(array_slice($leaves, $split)));
     }
 
     private function binary(string $hash): string

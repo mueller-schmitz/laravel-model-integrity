@@ -36,7 +36,7 @@ final class Tables
         ];
 
         if ($reveal) {
-            $versionColumns[] = Column::text('snapshot_revealed', 'Snapshot with personal data decrypted (empty once shredded)');
+            $versionColumns[] = Column::text('snapshot_revealed', 'Snapshot with personal data decrypted (null where the key was shredded)');
         }
 
         return [

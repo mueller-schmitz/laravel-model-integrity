@@ -123,3 +123,28 @@ it('rejects a leaf at another position, another leaf, a shortened path or anothe
 it('has no audit path for a position outside the tree', function (): void {
     (new MerkleTree)->auditPath(merkleLeaves(3), 3);
 })->throws(InvalidArgumentException::class);
+
+it('builds the audit paths of many leaves in linear time', function (): void {
+    $leaves = merkleLeaves(5000);
+    $tree = new MerkleTree;
+    $started = microtime(true);
+
+    $paths = $tree->auditPaths($leaves, range(0, 4999));
+
+    expect(microtime(true) - $started)->toBeLessThan(3.0)
+        ->and($paths[1234])->toBe($tree->auditPath($leaves, 1234))
+        ->and($tree->verifyInclusion($leaves[4999], 4999, 5000, $paths[4999], (string) $tree->root($leaves)))->toBeTrue();
+});
+
+it('gives the same audit paths in one pass as one by one', function (): void {
+    $tree = new MerkleTree;
+
+    foreach ([1, 2, 3, 5, 7, 8, 13, 33] as $size) {
+        $leaves = merkleLeaves($size);
+        $paths = $tree->auditPaths($leaves, range(0, $size - 1));
+
+        foreach (range(0, $size - 1) as $index) {
+            expect($paths[$index])->toBe($tree->auditPath($leaves, $index), "{$index} of {$size}");
+        }
+    }
+});

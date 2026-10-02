@@ -78,4 +78,5 @@ Die Anwendung [[Name]] verarbeitet die folgenden steuerlich relevanten Daten: [[
 ## 6. Datenzugriff (Z1–Z3)
 
 - Z3 (Datenträgerüberlassung): `php artisan model-integrity:export <Verzeichnis> [--from=…] [--to=…]` erzeugt `index.xml` und CSV-Dateien nach dem Beschreibungsstandard (GDPdU), einen Prüfbericht, die Spezifikation (`SPEC.md`), Beweisdateien und Prüfsummen.
+- Der Export enthält personenbezogene Daten im Klartext (außer mit `--no-reveal`). Er wird nur für den Eigentümer lesbar angelegt, auf [[Datenträger/Verfahren]] übergeben und nach Abschluss der Prüfung gelöscht durch: [[…]].
 - Z1/Z2: [[Verfahren für den Lesezugriff im System]].

@@ -20,6 +20,11 @@ class GdpduDtd
     /** SHA-256 of gdpdu-01-03-2019.dtd as published by CaseWare. */
     public const string SHA256 = '691051c9828ec2bbef71527c4aa77554c09ecd49e862fc6f2bc4b14507c72a0e';
 
+    /** The published archive has a few kilobytes; larger downloads are refused. */
+    private const int MAX_DOWNLOAD = 5_242_880;
+
+    private const int MAX_DTD = 1_048_576;
+
     public function __construct(
         private readonly string $sha256 = self::SHA256,
     ) {}
@@ -63,6 +68,10 @@ class GdpduDtd
             throw new RuntimeException("Downloading the GDPdU DTD from [{$url}] failed with HTTP {$response->status()}; download it manually and set model-integrity.export.dtd_path.");
         }
 
+        if (strlen($response->body()) > self::MAX_DOWNLOAD) {
+            throw new RuntimeException("The download from [{$url}] is larger than expected; download the DTD manually.");
+        }
+
         $zip = tempnam(sys_get_temp_dir(), 'mi-gdpdu');
 
         if ($zip === false || file_put_contents($zip, $response->body()) === false) {
@@ -76,22 +85,22 @@ class GdpduDtd
                 throw new RuntimeException("The download from [{$url}] is no ZIP archive.");
             }
 
+            $contents = null;
+
             for ($index = 0; $index < $archive->numFiles; $index++) {
-                $name = $archive->getNameIndex($index);
+                $entry = $archive->statIndex($index);
 
-                if (is_string($name) && basename($name) === GdpduIndex::DTD) {
-                    $contents = $archive->getFromIndex($index);
-                    $archive->close();
+                if (is_array($entry) && basename($entry['name']) === GdpduIndex::DTD && $entry['size'] <= self::MAX_DTD) {
+                    $read = $archive->getFromIndex($index);
+                    $contents = is_string($read) ? $read : null;
 
-                    if (is_string($contents)) {
-                        return $contents;
-                    }
+                    break;
                 }
             }
 
             $archive->close();
 
-            throw new RuntimeException("The download from [{$url}] does not contain ".GdpduIndex::DTD.'.');
+            return $contents ?? throw new RuntimeException("The download from [{$url}] does not contain ".GdpduIndex::DTD.'.');
         } finally {
             @unlink($zip);
         }

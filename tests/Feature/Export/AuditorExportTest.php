@@ -2,17 +2,24 @@
 
 declare(strict_types=1);
 
+use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use MuellerSchmitz\ModelIntegrity\Anchoring\Anchorer;
+use MuellerSchmitz\ModelIntegrity\Anchoring\AnchorManager;
 use MuellerSchmitz\ModelIntegrity\Anchoring\MerkleTree;
+use MuellerSchmitz\ModelIntegrity\Anchoring\VersionHashes;
+use MuellerSchmitz\ModelIntegrity\Export\AuditorExport;
 use MuellerSchmitz\ModelIntegrity\Export\GdpduDtd;
+use MuellerSchmitz\ModelIntegrity\Export\Table;
 use MuellerSchmitz\ModelIntegrity\Facades\IntegritySubjects;
+use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Customer;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Order;
+use MuellerSchmitz\ModelIntegrity\Verification\IntegrityChecker;
 
 beforeEach(function (): void {
     Storage::fake('anchors');
@@ -199,3 +206,73 @@ it('writes an index.xml that is valid against the published DTD', function (): v
 
     expect($valid)->toBeTrue()->and($errors)->toBe([]);
 })->skip(fn () => getenv('MI_GDPDU_DTD') === false, 'Set MI_GDPDU_DTD to the path of gdpdu-01-03-2019.dtd to validate against it.');
+
+it('completes the export when stored data was tampered with, and names the problems', function (string $table, array $change): void {
+    DB::table($table)->where($table === 'integrity_versions' ? 'sequence' : 'id', $table === 'integrity_versions' ? 2 : DB::table($table)->min('id'))->update($change);
+
+    expect(export($this->directory))->toBe(1);
+
+    foreach (['index.xml', 'report.json', 'SHA256SUMS', 'versions.csv', 'inclusion_proofs.csv'] as $file) {
+        expect(File::exists($this->directory.'/'.$file))->toBeTrue($file);
+    }
+
+    expect(json_decode((string) File::get($this->directory.'/report.json'), true)['export_problems'])->not->toBe([]);
+})->with([
+    'hash not in lowercase hex' => ['integrity_versions', fn () => ['hash' => strtoupper((string) DB::table('integrity_versions')->where('sequence', 2)->value('hash'))]],
+    'anchor root not a hash' => ['integrity_anchors', ['merkle_root' => 'not a hash']],
+    'snapshot not JSON' => ['integrity_versions', ['snapshot' => '{broken']],
+]);
+
+it('exports a consistent state and names its head', function (): void {
+    export($this->directory);
+
+    expect(json_decode((string) File::get($this->directory.'/report.json'), true)['head_sequence'])->toBe((int) DB::table('integrity_versions')->max('sequence'));
+});
+
+it('exports versions newer than the last anchor without an inclusion proof', function (): void {
+    Invoice::query()->create(['number' => 'RE-2', 'total' => '1.00']);
+
+    export($this->directory);
+
+    expect(csvRows($this->directory.'/inclusion_proofs.csv'))->toHaveCount(count(csvRows($this->directory.'/versions.csv')) - 1);
+});
+
+it('removes a partial export when writing fails', function (): void {
+    app()->bind(AuditorExport::class, fn () => new class(...array_map(app(...), [IntegrityChecker::class, MerkleTree::class, VersionHashes::class, AnchorManager::class, GdpduDtd::class, CanonicalSerializer::class, Filesystem::class])) extends AuditorExport
+    {
+        protected function writeStoredFiles(string $directory, Table $table): void
+        {
+            throw new RuntimeException('disk full');
+        }
+    });
+
+    expect(export($this->directory))->toBe(2)
+        ->and(File::exists($this->directory))->toBeFalse()
+        ->and(File::glob(dirname($this->directory).'/.'.basename($this->directory).'*'))->toBe([]);
+});
+
+it('keeps the export readable for its owner only', function (): void {
+    export($this->directory);
+
+    expect(fileperms($this->directory) & 0777)->toBe(0700)
+        ->and(fileperms($this->directory.'/versions.csv') & 0777)->toBe(0600);
+})->skip(PHP_OS_FAMILY === 'Windows', 'Windows has no POSIX permissions.');
+
+it('refuses a path that is a file', function (): void {
+    $file = tempnam(sys_get_temp_dir(), 'mi-file');
+
+    try {
+        expect(export($file))->toBe(2);
+    } finally {
+        unlink($file);
+    }
+});
+
+it('reads dates in UTC, with a time if given, and rejects a reversed period', function (): void {
+    DB::table('integrity_versions')->where('sequence', 1)->update(['created_at' => '2026-01-01 04:30:00.000000']);
+
+    export($this->directory, ['--to' => '2026-01-01T06:00:00+01:00']);
+
+    expect(collect(csvRows($this->directory.'/versions.csv'))->pluck('sequence')->all())->toBe(['1'])
+        ->and(export($this->directory.'-reversed', ['--from' => '2026-02-01', '--to' => '2026-01-01']))->toBe(2);
+});

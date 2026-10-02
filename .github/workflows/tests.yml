@@ -61,6 +61,15 @@ jobs:
       - name: Installed versions
         run: composer show | grep -E '^(laravel/framework|orchestra/testbench|phpunit/phpunit|pestphp/pest) '
 
+      # The GDPdU DTD is not part of the package (published without a license
+      # notice); fetched to validate the export's index.xml against it.
+      - name: Fetch GDPdU DTD
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/gdpdu.zip" "https://cdn.prod.website-files.com/693916696fbefc2d8e49a0e7/6996a47cff41a53a66326a5d_gdpdu-01-03-2019.zip"
+          unzip -j -o "$RUNNER_TEMP/gdpdu.zip" '*gdpdu-01-03-2019.dtd' -d "$RUNNER_TEMP"
+          echo "691051c9828ec2bbef71527c4aa77554c09ecd49e862fc6f2bc4b14507c72a0e  $RUNNER_TEMP/gdpdu-01-03-2019.dtd" | sha256sum -c -
+          echo "MI_GDPDU_DTD=$RUNNER_TEMP/gdpdu-01-03-2019.dtd" >> "$GITHUB_ENV"
+
       - name: Run tests
         run: vendor/bin/pest --ci
 

@@ -19,6 +19,10 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 - `MerkleTree::auditPath()` and `verifyInclusion()` (RFC 6962 / RFC 9162)
 - German template of the procedure documentation (`vendor:publish --tag=model-integrity-docs`)
 
+### Fixed
+
+- Verification reports versions whose stored snapshot is no valid JSON, and stored hashes that are not lowercase hex, instead of failing on them
+
 ### Changed
 
 - `GrantStatements::build()` takes tables that may be read, added to and updated (`updatableTables`); `model-integrity:grants` includes the subject keys table

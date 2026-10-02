@@ -8,6 +8,7 @@ use Carbon\CarbonImmutable;
 use Closure;
 use DateTimeInterface;
 use Illuminate\Contracts\Encryption\DecryptException;
+use Illuminate\Database\Connection;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Relation;
@@ -16,6 +17,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use JsonException;
 use League\Flysystem\UnableToRetrieveMetadata;
 use MuellerSchmitz\ModelIntegrity\Casts\AsIntegrityFile;
 use MuellerSchmitz\ModelIntegrity\Concerns\HasIntegrity;
@@ -286,24 +288,12 @@ class IntegrityChecker
     protected function consistently(Closure $callback): mixed
     {
         $this->fileProblems = [];
-        $connection = DB::connection($this->connection());
-        $driver = $connection->getDriverName();
-        $outermost = $connection->transactionLevel() === 0;
 
-        // MySQL and MariaDB apply the level to the next transaction only.
-        if ($outermost && in_array($driver, ['mysql', 'mariadb'], true)) {
-            $connection->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-        }
+        /** @var Connection $connection */
+        $connection = DB::connection($this->connection());
 
         try {
-            return $connection->transaction(function () use ($connection, $driver, $outermost, $callback): mixed {
-                // PostgreSQL defaults to READ COMMITTED; set before the first query.
-                if ($outermost && $driver === 'pgsql') {
-                    $connection->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-                }
-
-                return $callback();
-            });
+            return ReadView::run($connection, $callback);
         } finally {
             // The checker is a singleton; long-running workers keep it alive.
             $this->fileProblems = [];
@@ -504,7 +494,7 @@ class IntegrityChecker
                 }
 
                 foreach ($fileAttributes as $attribute) {
-                    $sha256 = $version->snapshot[$attribute] ?? null;
+                    $sha256 = ($this->snapshotOf($version) ?? [])[$attribute] ?? null;
 
                     if (is_string($sha256) && ! isset($referencedFiles[$sha256])) {
                         $referencedFiles[$sha256] = [$attribute, $version->version];
@@ -846,7 +836,13 @@ class IntegrityChecker
 
         $options = ModelOptions::of($model);
         $current = $this->snapshots->build($model, $options->except, $options->relations);
-        $recorded = $last->snapshot;
+        $recorded = $this->snapshotOf($last);
+
+        if ($recorded === null) {
+            $errors[] = $drift("The snapshot of version {$last->version} is no valid JSON; the current state cannot be compared.");
+
+            return;
+        }
 
         // Resolved per check: it holds the subject keys of one request or job.
         $personalData = app(PersonalData::class);
@@ -909,7 +905,7 @@ class IntegrityChecker
 
         $keyIds = [];
 
-        foreach ($last->snapshot as $value) {
+        foreach ($this->snapshotOf($last) ?? [] as $value) {
             $encrypted = app(PersonalData::class)->encrypted($value);
 
             if ($encrypted !== null) {
@@ -928,6 +924,21 @@ class IntegrityChecker
         return array_keys($keyIds) === [$expected]
             ? null
             : "Personal attributes of version {$last->version} are encrypted with the key of another data subject than [{$name}].";
+    }
+
+    /**
+     * The stored snapshot, or null if it is no valid JSON (tampered with);
+     * the hash check reports that version.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function snapshotOf(Version $version): ?array
+    {
+        try {
+            return $version->storedSnapshot();
+        } catch (JsonException) {
+            return null;
+        }
     }
 
     /**
@@ -960,7 +971,8 @@ class IntegrityChecker
     {
         try {
             return hash_equals($version->hash, $this->hasher->hash($version->toEnvelope()));
-        } catch (UnsupportedHashFormatException|InvalidEnvelopeException) {
+        } catch (UnsupportedHashFormatException|InvalidEnvelopeException|JsonException) {
+            // JsonException: a stored snapshot or context that is no valid JSON.
             return false;
         }
     }

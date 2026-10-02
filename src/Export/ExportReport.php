@@ -15,11 +15,9 @@ use MuellerSchmitz\ModelIntegrity\Verification\IntegrityResult;
  */
 final class ExportReport
 {
-    /**
-     * @param  array{all: IntegrityResult, files: IntegrityResult|null}  $checks
-     */
-    public function write(string $directory, array $checks, ExportOptions $options): void
+    public function write(string $directory, ExportResult $result, ExportOptions $options): void
     {
+        $checks = $result->checks;
         $report = [
             'generated_at' => CarbonImmutable::now('UTC')->format('Y-m-d\TH:i:s\Z'),
             'package' => 'mueller-schmitz/laravel-model-integrity '.$this->packageVersion(),
@@ -29,6 +27,8 @@ final class ExportReport
                 'type' => $options->type,
                 'personal_data_revealed' => $options->reveal,
             ],
+            'head_sequence' => $result->headSequence,
+            'export_problems' => $result->problems,
             'checks' => array_filter([
                 'all' => $this->result($checks['all']),
                 'files' => $checks['files'] === null ? null : $this->result($checks['files']),
@@ -36,7 +36,7 @@ final class ExportReport
         ];
 
         file_put_contents($directory.'/report.json', json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)."\n");
-        file_put_contents($directory.'/report.html', $this->html($report, $checks));
+        file_put_contents($directory.'/report.html', $this->html($report, $checks, $result->problems));
     }
 
     /**
@@ -61,8 +61,9 @@ final class ExportReport
     /**
      * @param  array<string, mixed>  $report
      * @param  array{all: IntegrityResult, files: IntegrityResult|null}  $checks
+     * @param  list<string>  $problems
      */
-    private function html(array $report, array $checks): string
+    private function html(array $report, array $checks, array $problems): string
     {
         $e = fn (mixed $value): string => htmlspecialchars(is_scalar($value) ? (string) $value : '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $sections = '';
@@ -75,13 +76,18 @@ final class ExportReport
                 .($rows === '' ? '' : '<table><thead><tr><th>Type</th><th>Subject</th><th>Version</th><th>Sequence</th><th>Message</th></tr></thead><tbody>'.$rows.'</tbody></table>');
         }
 
+        if ($problems !== []) {
+            $sections .= '<h2>Export problems</h2><p class="failed">Some data could not be exported as it should; it is exported as stored.</p><ul>'
+                .implode('', array_map(fn (string $problem): string => '<li>'.$e($problem).'</li>', $problems)).'</ul>';
+        }
+
         $filter = is_array($report['filter'] ?? null) ? $report['filter'] : [];
 
         return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Integrity report</title>'
             .'<style>body{font-family:system-ui,sans-serif;margin:2rem;color:#1a1a1a}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:.3rem .5rem;text-align:left;vertical-align:top}.passed{color:#176b2c}.failed{color:#a4161a}code{word-break:break-all}</style></head><body>'
             .'<h1>Integrity report</h1>'
             .'<p>Generated '.$e($report['generated_at'] ?? '').' with <code>'.$e($report['package'] ?? '').'</code>.</p>'
-            .'<p>Filter: from '.$e($filter['from'] ?? '–').', to '.$e($filter['to'] ?? '–').', type '.$e($filter['type'] ?? 'all').'.</p>'
+            .'<p>Covers the global chain up to sequence '.$e($report['head_sequence'] ?? '').'. Filter: from '.$e($filter['from'] ?? '–').', to '.$e($filter['to'] ?? '–').', type '.$e($filter['type'] ?? 'all').'.</p>'
             .$sections
             .'<p>Check the export independently with SPEC.md: recompute every hash from versions.jsonl, the Merkle inclusion proofs against the anchors, and the proof files with <code>ots verify</code> or <code>openssl ts -verify</code>. SHA256SUMS lists the checksums of all files.</p>'
             ."</body></html>\n";
