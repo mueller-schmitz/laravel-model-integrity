@@ -13,9 +13,10 @@ class ShredCommand extends Command
     protected $signature = 'model-integrity:shred
         {subject : Model class or morph alias of the data subject}
         {id : Key of the data subject}
-        {--reason= : Reason recorded in the chain, e.g. the number of the erasure request}';
+        {--reason= : Reason recorded in the chain, e.g. the number of the erasure request}
+        {--force : Block a subject that has no key yet from ever getting one}';
 
-    protected $description = 'Shred the key of a data subject: its personal data in all versions becomes unreadable';
+    protected $description = 'Shred the key of a data subject: its encrypted personal data in all versions becomes unreadable';
 
     public function handle(Subjects $subjects): int
     {
@@ -36,6 +37,13 @@ class ShredCommand extends Command
 
         $subject = "{$type}:{$id}";
         $reason = $this->option('reason');
+
+        // A typo in the class or key must not be reported as a fulfilled erasure request.
+        if (! $subjects->exists($subject) && $this->option('force') !== true) {
+            $this->error("No key exists for [{$subject}]: check the model class (or morph alias) and the key. Use --force to keep this subject from ever getting a key.");
+
+            return self::FAILURE;
+        }
 
         if ($subjects->isShredded($subject)) {
             $this->info("The key of [{$subject}] was already shredded.");

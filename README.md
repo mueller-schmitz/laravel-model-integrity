@@ -235,8 +235,15 @@ $version->revealedSnapshot()->shredded;   // the attributes whose key was shredd
 
 - A personal value is stored as `{"@encrypted": {"k": <key id>, "c": <ciphertext>}}` (AES-256-GCM over its canonical JSON); `null` stays `null`. The hash format is unchanged.
 - Keys are stored in `integrity_subject_keys`, wrapped with the application key (`APP_PREVIOUS_KEYS` keeps old wraps readable). Creating and shredding a key are versions in the global chain (type `model-integrity.subject`); the key itself is never part of a snapshot.
+- `model-integrity:shred` refuses a subject that never had a key (usually a typo in class or key); `--force` blocks such a subject from ever getting one.
 - Shredding drops the key and keeps the row as a tombstone, so the subject never gets a new key. Afterwards only `null` or the declared anonymized values can be recorded for it; anything else throws a `ShreddedSubjectException`, so no plain personal data reaches the history.
-- **Anonymize the rows yourself.** Shredding does not change your tables: retention periods and what to keep are decisions of your application. Verification reports personal attributes of shredded subjects that still hold data, and compares the other attributes as usual.
+- **Anonymize the rows yourself.** Shredding does not change your tables: retention periods and what to keep are decisions of your application. Verification reports personal attributes of shredded subjects that still hold data, and compares the other attributes as usual. Models in `immutable` mode cannot be updated; anonymize their rows with SQL, ideally in a documented maintenance step.
+- `$integrityAnonymized` values are compared in the form a snapshot holds them (decimals as strings, dates as ISO strings); attributes with an `encrypted` cast can only be anonymized to `null`.
+- Resolve the subject from the current attributes. Belongs-to relations whose foreign key changed are reloaded before the subject is resolved; verification reports versions encrypted with the key of another subject than the current one.
+- If `integritySubject()` returns `null`, the model itself is the subject. Changing the morph class of a subject model (e.g. introducing a morph map) gives the same person a new key; shred under both names.
+- `reason` and `context` are stored in plain text: never put personal data there. Versions recorded before the attributes were declared personal (or before 0.4) keep them in plain text and are not affected by shredding.
+- Rotating `APP_KEY`: old wraps stay readable through `APP_PREVIOUS_KEYS`. Removing a previous key makes every key wrapped with it unreadable – the same as shredding all those subjects – and verification reports their personal data as unreadable.
+- A key removed or cleared outside the package (without shredding) is reported, not taken for a shredding.
 - **Limits:** the keys live in the same database, so backups contain them until those backups expire – shredding is complete only then. Logs, caches, queues, search indexes and copies outside the integrity tables are not covered. Files stored with `IntegrityFiles` are not encrypted.
 
 ### Relations

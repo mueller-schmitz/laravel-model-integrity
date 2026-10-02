@@ -15,6 +15,7 @@ use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\ShreddedSubjectException;
 use MuellerSchmitz\ModelIntegrity\Models\DataSubject;
 use MuellerSchmitz\ModelIntegrity\Recording\ChainName;
+use UnexpectedValueException;
 
 /**
  * Keys of data subjects, wrapped with the application key. Shredding drops
@@ -67,6 +68,37 @@ class SubjectKeys
         $wrapped = $this->connection()->table($this->table())->where('id', $id)->value('key');
 
         return $this->keys[$id] = is_string($wrapped) ? $this->unwrap($wrapped) : null;
+    }
+
+    /**
+     * Whether a key with this id is usable, was shredded, or is missing
+     * although it was never shredded (removed outside the package).
+     *
+     * @return 'active'|'shredded'|'missing'
+     */
+    public function state(string $id): string
+    {
+        $row = $this->connection()->table($this->table())->where('id', $id)->first(['key', 'shredded_at']);
+
+        return match (true) {
+            $row === null => 'missing',
+            $row->key !== null => 'active',
+            $row->shredded_at !== null => 'shredded',
+            default => 'missing',
+        };
+    }
+
+    /**
+     * The id of the subject's key row, also after shredding; null if the subject never had one.
+     */
+    public function keyIdFor(string $subject): ?string
+    {
+        return $this->row($this->name($subject))['id'] ?? null;
+    }
+
+    public function exists(string $subject): bool
+    {
+        return $this->row($this->name($subject)) !== null;
     }
 
     public function isShredded(string $subject): bool
@@ -131,7 +163,7 @@ class SubjectKeys
         $key = $row->key ?? null;
 
         if (! is_string($id) || ($key !== null && ! is_string($key))) {
-            throw new DecryptException('A data subject row is malformed.');
+            throw new UnexpectedValueException('A data subject row is malformed.');
         }
 
         return ['id' => $id, 'key' => $key];

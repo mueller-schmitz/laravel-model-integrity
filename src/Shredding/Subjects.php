@@ -27,6 +27,14 @@ class Subjects
         return $this->keys->shred($this->name($subject), $reason);
     }
 
+    /**
+     * Whether the subject ever had a key (or a tombstone).
+     */
+    public function exists(Model|string $subject): bool
+    {
+        return $this->keys->exists($this->name($subject));
+    }
+
     public function isShredded(Model|string $subject): bool
     {
         return $this->keys->isShredded($this->name($subject));

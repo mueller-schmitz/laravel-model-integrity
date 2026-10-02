@@ -7,6 +7,7 @@ namespace MuellerSchmitz\ModelIntegrity\Concerns;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Config;
 use InvalidArgumentException;
@@ -17,6 +18,7 @@ use MuellerSchmitz\ModelIntegrity\Models\Version;
 use MuellerSchmitz\ModelIntegrity\Recording\SnapshotBuilder;
 use MuellerSchmitz\ModelIntegrity\Recording\VersionRecorder;
 use MuellerSchmitz\ModelIntegrity\Shredding\PersonalData;
+use MuellerSchmitz\ModelIntegrity\Shredding\SubjectKey;
 use MuellerSchmitz\ModelIntegrity\Shredding\SubjectKeys;
 use MuellerSchmitz\ModelIntegrity\Shredding\SubjectName;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityChecker;
@@ -300,20 +302,52 @@ trait HasIntegrity
     }
 
     /**
-     * Creating a subject's key records a version of its own, so it must
-     * happen before the recorder locks the chain head for this model.
+     * The data subject and its key (null once shredded). Creating a key
+     * records a version of its own, so this runs before the recorder locks
+     * the chain head for this model.
+     *
+     * @return array{string|null, SubjectKey|null}
      */
-    protected function ensureIntegritySubjectKey(): void
+    protected function resolveIntegritySubjectKey(): array
     {
         if ($this->getIntegrityPersonal() === []) {
-            return;
+            return [null, null];
         }
 
+        $subject = SubjectName::of($this->currentIntegritySubject());
+
         try {
-            app(SubjectKeys::class)->keyFor(SubjectName::of($this->integritySubject() ?? $this));
+            return [$subject, app(SubjectKeys::class)->keyFor($subject)];
         } catch (ShreddedSubjectException) {
             // Only anonymized values can be recorded; PersonalData checks them.
+            return [$subject, null];
         }
+    }
+
+    /**
+     * integritySubject() after dropping loaded belongs-to relations whose
+     * foreign key changed: Eloquent keeps them, so a reassigned order would
+     * otherwise still name its former customer.
+     */
+    protected function currentIntegritySubject(): Model
+    {
+        foreach (array_keys($this->getRelations()) as $name) {
+            if (! is_string($name) || ! method_exists($this, $name)) {
+                continue;
+            }
+
+            $relation = $this->{$name}();
+
+            if ($relation instanceof BelongsTo) {
+                $foreignKey = $relation->getForeignKeyName();
+
+                if ($this->isDirty($foreignKey) || $this->wasChanged($foreignKey)) {
+                    $this->unsetRelation($name);
+                }
+            }
+        }
+
+        return $this->integritySubject() ?? $this;
     }
 
     /**
@@ -322,11 +356,11 @@ trait HasIntegrity
      * @param  array<string, mixed>  $snapshot
      * @return array<string, mixed>
      */
-    protected function protectIntegritySnapshot(array $snapshot): array
+    protected function protectIntegritySnapshot(array $snapshot, ?string $subject, ?SubjectKey $key): array
     {
         $personal = $this->getIntegrityPersonal();
 
-        if ($personal === []) {
+        if ($personal === [] || $subject === null) {
             return $snapshot;
         }
 
@@ -336,12 +370,7 @@ trait HasIntegrity
             throw IntegrityConfigurationException::unknownPersonalAttributes($this, $missing);
         }
 
-        return app(PersonalData::class)->encrypt(
-            $snapshot,
-            $personal,
-            SubjectName::of($this->integritySubject() ?? $this),
-            $this->getIntegrityAnonymized(),
-        );
+        return app(PersonalData::class)->encryptWith($snapshot, $personal, $key, $subject, $this->getIntegrityAnonymized());
     }
 
     /**
@@ -350,13 +379,13 @@ trait HasIntegrity
     protected function recordIntegrityVersion(string $event, ?array $snapshot = null): Version
     {
         $this->getIntegrityMode();
-        $this->ensureIntegritySubjectKey();
+        [$subject, $key] = $this->resolveIntegritySubjectKey();
 
         return app(VersionRecorder::class)->record(
             $this,
             $event,
             // Built lazily, after the recorder holds the chain head lock.
-            fn (): array => $this->protectIntegritySnapshot($snapshot ?? $this->buildIntegritySnapshot()),
+            fn (): array => $this->protectIntegritySnapshot($snapshot ?? $this->buildIntegritySnapshot(), $subject, $key),
             $this->getIntegritySchemaVersion(),
             $this->integrityReason,
             $this->integrityContext,

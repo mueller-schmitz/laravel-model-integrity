@@ -7,6 +7,7 @@ namespace MuellerSchmitz\ModelIntegrity\Shredding;
 use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Encryption\Encrypter;
 use InvalidArgumentException;
+use MuellerSchmitz\ModelIntegrity\Exceptions\MissingSubjectKeyException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\ShreddedSubjectException;
 use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
 
@@ -37,6 +38,29 @@ class PersonalData
      */
     public function encrypt(array $snapshot, array $attributes, string $subject, array $anonymized = []): array
     {
+        try {
+            $key = $this->keys->keyFor($subject);
+        } catch (ShreddedSubjectException) {
+            $key = null;
+        }
+
+        return $this->encryptWith($snapshot, $attributes, $key, $subject, $anonymized);
+    }
+
+    /**
+     * Encrypts with a key resolved before, e.g. before a recorder locked the
+     * chain head.
+     *
+     * @param  array<string, mixed>  $snapshot  canonical snapshot
+     * @param  list<string>  $attributes  personal attributes
+     * @param  SubjectKey|null  $key  null if the subject was shredded
+     * @param  array<string, mixed>  $anonymized  values allowed after the subject was shredded
+     * @return array<string, mixed>
+     *
+     * @throws ShreddedSubjectException when a shredded subject's attribute holds other data
+     */
+    public function encryptWith(array $snapshot, array $attributes, ?SubjectKey $key, string $subject, array $anonymized = []): array
+    {
         $unknown = array_values(array_diff($attributes, array_keys($snapshot)));
 
         if ($unknown !== []) {
@@ -49,7 +73,7 @@ class PersonalData
             return $snapshot;
         }
 
-        if ($this->keys->isShredded($subject)) {
+        if ($key === null) {
             $remaining = array_keys(array_filter(
                 $values,
                 fn (mixed $value, string $attribute): bool => ! array_key_exists($attribute, $anonymized) || $this->serializer->normalize($anonymized[$attribute]) !== $value,
@@ -66,7 +90,6 @@ class PersonalData
             return $snapshot;
         }
 
-        $key = $this->keys->keyFor($subject);
         $encrypter = new Encrypter($key->key, self::CIPHER);
 
         foreach ($values as $attribute => $value) {
@@ -82,6 +105,7 @@ class PersonalData
      * @param  array<string, mixed>  $snapshot
      *
      * @throws DecryptException when a value does not decrypt with its key (it was tampered with or the key swapped)
+     * @throws MissingSubjectKeyException when a key is gone without having been shredded
      */
     public function reveal(array $snapshot): RevealedSnapshot
     {
@@ -97,6 +121,10 @@ class PersonalData
             $key = $this->keys->find($encrypted['k']);
 
             if ($key === null) {
+                if ($this->keys->state($encrypted['k']) !== 'shredded') {
+                    throw MissingSubjectKeyException::for($encrypted['k']);
+                }
+
                 $snapshot[$attribute] = null;
                 $shredded[] = $attribute;
 

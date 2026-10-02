@@ -101,3 +101,70 @@ it('shreds from the command line', function (): void {
 
     expect(IntegritySubjects::isShredded($this->customer))->toBeTrue();
 });
+
+it('encrypts with the key of the new subject when the relation changed after it was loaded', function (): void {
+    $other = Customer::query()->create(['number' => 'C-2', 'name' => 'Bob Builder', 'email' => null]);
+    $this->order->load('customer');
+
+    $this->order->update(['customer_id' => $other->id, 'shipping_name' => 'Bob Builder']);
+    IntegritySubjects::shred($other);
+
+    $last = $this->order->integrityVersions()->get()->last()->revealedSnapshot();
+
+    expect($last->shredded)->toContain('shipping_name')
+        ->and($last->snapshot['shipping_name'])->toBeNull();
+});
+
+it('reports a version encrypted with the key of another data subject', function (): void {
+    $other = Customer::query()->create(['number' => 'C-2', 'name' => 'Bob Builder', 'email' => null]);
+    // The order was moved to another customer without recording a version.
+    DB::table('orders')->where('id', $this->order->id)->update(['customer_id' => $other->id]);
+
+    expect(implode("\n", driftMessages()))->toContain('key of another data subject');
+});
+
+it('reports leftovers with a checker resolved before the shredding, e.g. in a queue worker', function (): void {
+    $checker = app(IntegrityChecker::class);
+    $checker->checkAll();
+    app()->forgetScopedInstances();
+
+    IntegritySubjects::shred($this->customer);
+    app()->forgetScopedInstances();
+
+    expect(implode("\n", $checker->checkAll()->errors()->map(fn ($e): string => (string) $e)->all()))->toContain('still hold data');
+});
+
+it('reports a key removed without shredding', function (): void {
+    DB::table('integrity_subject_keys')->update(['key' => null]);
+    app()->forgetScopedInstances();
+
+    expect(implode("\n", driftMessages()))->toContain('removed without shredding');
+});
+
+it('refuses to shred an unknown subject from the command line unless forced', function (): void {
+    $this->artisan('model-integrity:shred', ['subject' => 'Customer', 'id' => $this->customer->id])
+        ->expectsOutputToContain('No key exists')
+        ->assertExitCode(1);
+
+    expect(IntegritySubjects::isShredded('Customer:'.$this->customer->id))->toBeFalse();
+
+    $this->artisan('model-integrity:shred', ['subject' => 'Customer', 'id' => $this->customer->id, '--force' => true])->assertExitCode(0);
+
+    expect(IntegritySubjects::isShredded('Customer:'.$this->customer->id))->toBeTrue();
+});
+
+it('does not report drift when personal attributes are no longer declared', function (): void {
+    $plain = new class extends Customer
+    {
+        protected $table = 'customers';
+
+        protected array $integrityPersonal = [];
+
+        public function getMorphClass(): string
+        {
+            return Customer::class;
+        }
+    };
+
+    expect(app(IntegrityChecker::class)->checkModel($plain->newQuery()->findOrFail($this->customer->id))->passes())->toBeTrue();
+});
