@@ -10,6 +10,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Config;
 use MuellerSchmitz\ModelIntegrity\Exceptions\ImmutableModelException;
 use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
+use MuellerSchmitz\ModelIntegrity\Shredding\PersonalData;
+use MuellerSchmitz\ModelIntegrity\Shredding\RevealedSnapshot;
 
 /**
  * A recorded, append-only version of a model.
@@ -79,6 +81,15 @@ class Version extends Model
         $this->valid = $valid;
 
         return $this;
+    }
+
+    /**
+     * The snapshot with its personal attributes decrypted where the key of
+     * their data subject still exists; shredded attributes are null.
+     */
+    public function revealedSnapshot(): RevealedSnapshot
+    {
+        return app(PersonalData::class)->reveal($this->snapshot);
     }
 
     /**

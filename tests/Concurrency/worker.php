@@ -14,6 +14,7 @@ declare(strict_types=1);
  * - relations: attaches tags to a shared post and records the relation;
  *              this changes no row of the post itself
  * - anchor:    runs model-integrity:anchor <writes> times on the anchor disk
+ * - orders:    creates <writes> orders with personal data of the shared customer
  */
 
 use Illuminate\Support\Facades\DB;
@@ -21,6 +22,7 @@ use MuellerSchmitz\ModelIntegrity\Anchoring\Anchorer;
 use MuellerSchmitz\ModelIntegrity\Facades\IntegrityFiles;
 use MuellerSchmitz\ModelIntegrity\ModelIntegrityServiceProvider;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
+use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Order;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Post;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Tag;
 use Orchestra\Testbench\Foundation\Application;
@@ -50,6 +52,10 @@ try {
 
             // All workers change the same model and compete for its next version.
             Invoice::query()->findOrFail((int) $sharedId)->update(['note' => "worker {$worker} write {$i}"]);
+        }
+    } elseif ($mode === 'orders') {
+        for ($i = 1; $i <= (int) $writes; $i++) {
+            Order::query()->create(['customer_id' => (int) $sharedId, 'number' => "W{$worker}-{$i}", 'shipping_name' => "Name {$worker}", 'total' => '1.00']);
         }
     } elseif ($mode === 'anchor') {
         for ($i = 1; $i <= (int) $writes; $i++) {

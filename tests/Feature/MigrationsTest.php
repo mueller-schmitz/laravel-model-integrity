@@ -74,11 +74,16 @@ it('creates the anchor tables and the anchors head', function (): void {
 });
 
 it('keeps the index names of all integrity tables within the identifier limit', function (): void {
-    $tooLong = collect(['integrity_versions', 'integrity_files', 'integrity_anchors', 'integrity_anchor_proofs'])
+    $tooLong = collect(['integrity_versions', 'integrity_files', 'integrity_anchors', 'integrity_anchor_proofs', 'integrity_subject_keys'])
         ->flatMap(fn (string $table): array => array_column(Schema::getIndexes($table), 'name'))
         ->filter(fn (string $name): bool => strlen($name) > 63)
         ->values()
         ->all();
 
     expect($tooLong)->toBe([]);
+});
+
+it('creates the subject keys table with a unique subject', function (): void {
+    expect(Schema::hasColumns('integrity_subject_keys', ['id', 'subject', 'key', 'created_at', 'shredded_at']))->toBeTrue()
+        ->and(collect(Schema::getIndexes('integrity_subject_keys'))->where('unique', true)->pluck('columns')->all())->toContain(['subject']);
 });

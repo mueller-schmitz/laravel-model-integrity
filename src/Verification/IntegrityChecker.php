@@ -7,6 +7,7 @@ namespace MuellerSchmitz\ModelIntegrity\Verification;
 use Carbon\CarbonImmutable;
 use Closure;
 use DateTimeInterface;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Relation;
@@ -22,12 +23,14 @@ use MuellerSchmitz\ModelIntegrity\Events\IntegrityViolationDetected;
 use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\InvalidEnvelopeException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\UnsupportedHashFormatException;
+use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
 use MuellerSchmitz\ModelIntegrity\Models\StoredFile;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
 use MuellerSchmitz\ModelIntegrity\Recording\ChainName;
 use MuellerSchmitz\ModelIntegrity\Recording\ModelOptions;
 use MuellerSchmitz\ModelIntegrity\Recording\SnapshotBuilder;
+use MuellerSchmitz\ModelIntegrity\Shredding\PersonalData;
 use Throwable;
 
 /**
@@ -64,6 +67,8 @@ class IntegrityChecker
         private readonly Hasher $hasher,
         private readonly SnapshotBuilder $snapshots,
         private readonly AnchorVerifier $anchors,
+        private readonly PersonalData $personalData,
+        private readonly CanonicalSerializer $serializer,
     ) {}
 
     public function checkModel(Model $model): IntegrityResult
@@ -838,9 +843,39 @@ class IntegrityChecker
 
         $options = ModelOptions::of($model);
         $current = $this->snapshots->build($model, $options->except, $options->relations);
+        $recorded = $last->snapshot;
 
-        if ($current !== $last->snapshot) {
-            $changed = $this->changedKeys($last->snapshot, $current);
+        if ($options->personal !== []) {
+            try {
+                $revealed = $this->personalData->reveal($recorded);
+            } catch (DecryptException) {
+                $errors[] = $drift("Personal attributes of version {$last->version} cannot be decrypted with their key.");
+
+                return;
+            }
+
+            $recorded = $revealed->snapshot;
+            $leftovers = [];
+
+            // Shredded values are unknown; the row must not hold personal data any more.
+            foreach ($revealed->shredded as $attribute) {
+                $value = $current[$attribute] ?? null;
+                $anonymized = array_key_exists($attribute, $options->anonymized) ? $this->serializer->normalize($options->anonymized[$attribute]) : null;
+
+                if ($value !== null && $value !== $anonymized) {
+                    $leftovers[] = $attribute;
+                }
+
+                $current[$attribute] = $recorded[$attribute] = null;
+            }
+
+            if ($leftovers !== []) {
+                $errors[] = $drift('The key of the data subject was shredded, but ['.implode(', ', $leftovers).'] still hold data; anonymize the model.');
+            }
+        }
+
+        if ($current !== $recorded) {
+            $changed = $this->changedKeys($recorded, $current);
             $errors[] = $drift('The current state differs from version '.$last->version.' in ['.implode(', ', $changed).'].');
         }
     }

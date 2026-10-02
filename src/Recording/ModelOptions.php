@@ -15,11 +15,15 @@ final readonly class ModelOptions
     /**
      * @param  list<string>  $except
      * @param  list<string>  $relations
+     * @param  list<string>  $personal
+     * @param  array<string, mixed>  $anonymized
      */
     private function __construct(
         public array $except,
         public array $relations,
         public int $schemaVersion,
+        public array $personal = [],
+        public array $anonymized = [],
     ) {}
 
     public static function of(Model $model): self
@@ -31,11 +35,14 @@ final readonly class ModelOptions
         }
 
         $schemaVersion = $model->getIntegritySchemaVersion();
+        $anonymized = method_exists($model, 'getIntegrityAnonymized') ? $model->getIntegrityAnonymized() : [];
 
         return new self(
             self::strings($model->getIntegrityExcept()),
             self::strings($model->getIntegrityRelations()),
             is_int($schemaVersion) ? $schemaVersion : 1,
+            method_exists($model, 'getIntegrityPersonal') ? self::strings($model->getIntegrityPersonal()) : [],
+            is_array($anonymized) ? array_filter($anonymized, is_string(...), ARRAY_FILTER_USE_KEY) : [],
         );
     }
 

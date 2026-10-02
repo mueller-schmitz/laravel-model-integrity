@@ -23,6 +23,7 @@ it('merges the package config', function (): void {
         'files' => 'integrity_files',
         'anchors' => 'integrity_anchors',
         'anchor_proofs' => 'integrity_anchor_proofs',
+        'subject_keys' => 'integrity_subject_keys',
     ])
         ->and(config('model-integrity.files'))->toBe(['disk' => 'local', 'path' => 'integrity-files'])
         ->and(config('model-integrity.defaults'))->toBe([
@@ -61,5 +62,6 @@ it('publishes the migrations under its tag in dependency order', function (): vo
             'create_integrity_files_append_only_triggers.php',
             'create_integrity_anchors_tables.php',
             'create_integrity_anchors_append_only_triggers.php',
+            'create_integrity_subject_keys_table.php',
         ]);
 });

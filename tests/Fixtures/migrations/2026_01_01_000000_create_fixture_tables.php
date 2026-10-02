@@ -83,5 +83,24 @@ return new class extends Migration
             $table->string('title');
             $table->timestamps();
         });
+
+        Schema::create('customers', function (Blueprint $table): void {
+            $table->id();
+            $table->string('number');
+            $table->string('name');
+            $table->string('email')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('orders', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('customer_id')->nullable();
+            $table->string('number');
+            $table->string('shipping_name');
+            $table->json('shipping_address')->nullable();
+            $table->decimal('total', 10, 2);
+            $table->timestamps();
+        });
     }
 };

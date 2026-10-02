@@ -29,6 +29,7 @@ return [
         'files' => 'integrity_files',
         'anchors' => 'integrity_anchors',
         'anchor_proofs' => 'integrity_anchor_proofs',
+        'subject_keys' => 'integrity_subject_keys',
     ],
 
     /*
