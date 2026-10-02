@@ -257,3 +257,20 @@ it('includes the anchors in checkAll', function (): void {
 
     expect(anchorViolations($this->checker->checkAll()))->toContain('anchor_mismatch');
 });
+
+it('reports tampered rows instead of failing on them', function (array $change, string $type): void {
+    if (($change['snapshot'] ?? null) === '{broken' && DB::connection()->getDriverName() !== 'sqlite') {
+        $this->markTestSkipped('The JSON column of this database rejects invalid JSON.');
+    }
+
+    DB::table('integrity_versions')->where('sequence', 2)->update($change);
+
+    $result = $this->checker->checkAll();
+
+    expect($result->fails())->toBeTrue()
+        ->and(anchorViolations($result))->toContain($type);
+})->with([
+    // The hash still matches the anchor; the content no longer matches the hash.
+    'snapshot not JSON' => [['snapshot' => '{broken'], 'hash_mismatch'],
+    'hash not lowercase hex' => [fn () => ['hash' => strtoupper((string) DB::table('integrity_versions')->where('sequence', 2)->value('hash'))], 'anchor_mismatch'],
+]);

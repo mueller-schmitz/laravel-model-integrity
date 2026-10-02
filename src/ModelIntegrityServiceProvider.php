@@ -13,6 +13,7 @@ use MuellerSchmitz\ModelIntegrity\Anchoring\AnchorManager;
 use MuellerSchmitz\ModelIntegrity\Console\AnchorCommand;
 use MuellerSchmitz\ModelIntegrity\Console\AnchorExportCommand;
 use MuellerSchmitz\ModelIntegrity\Console\AnchorUpgradeCommand;
+use MuellerSchmitz\ModelIntegrity\Console\ExportCommand;
 use MuellerSchmitz\ModelIntegrity\Console\GrantsCommand;
 use MuellerSchmitz\ModelIntegrity\Console\InstallCommand;
 use MuellerSchmitz\ModelIntegrity\Console\ShredCommand;
@@ -63,6 +64,7 @@ class ModelIntegrityServiceProvider extends ServiceProvider
             AnchorCommand::class,
             AnchorExportCommand::class,
             AnchorUpgradeCommand::class,
+            ExportCommand::class,
             GrantsCommand::class,
             InstallCommand::class,
             ShredCommand::class,
@@ -74,6 +76,10 @@ class ModelIntegrityServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../config/model-integrity.php' => config_path('model-integrity.php'),
         ], 'model-integrity-config');
+
+        $this->publishes([
+            __DIR__.'/../stubs/verfahrensdokumentation.md' => base_path('docs/verfahrensdokumentation-model-integrity.md'),
+        ], 'model-integrity-docs');
 
         $this->publishesMigrations([
             __DIR__.'/../database/migrations' => database_path('migrations'),

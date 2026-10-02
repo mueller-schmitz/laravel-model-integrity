@@ -122,6 +122,29 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Auditor export
+    |--------------------------------------------------------------------------
+    |
+    | model-integrity:export writes GDPdU tables (index.xml + CSV) for the
+    | data access of the German tax authorities. The GDPdU DTD must be next
+    | to the index.xml; it is published by CaseWare without a license notice
+    | and is not part of this package. Download it from
+    | https://www.caseware.com/de/beschreibungsstandard and set its path,
+    | or run the export with --fetch-dtd.
+    |
+    */
+
+    'export' => [
+        'dtd_path' => env('MODEL_INTEGRITY_GDPDU_DTD'),
+        'dtd_url' => 'https://cdn.prod.website-files.com/693916696fbefc2d8e49a0e7/6996a47cff41a53a66326a5d_gdpdu-01-03-2019.zip',
+        'supplier' => [
+            'name' => env('APP_NAME', ''),
+            'location' => '',
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Append-only triggers
     |--------------------------------------------------------------------------
     |

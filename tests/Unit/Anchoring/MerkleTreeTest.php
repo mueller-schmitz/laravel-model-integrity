@@ -83,3 +83,68 @@ it('rejects leaves that are not SHA-256 hashes in lowercase hex', function (stri
     (new MerkleTree)->root([$leaf]);
 })->with(['short' => ['abc'], 'uppercase' => [strtoupper(hash('sha256', 'x'))], 'binary' => [hash('sha256', 'x', true)]])
     ->throws(InvalidArgumentException::class);
+
+// Audit paths computed independently with Python (RFC 6962, section 2.1.1).
+it('builds the reference audit paths', function (int $index, array $path): void {
+    expect((new MerkleTree)->auditPath(merkleLeaves(7), $index))->toBe($path);
+})->with([
+    'index 3' => [3, ['395421df5d0a75bdeb3c2ff42b96c071e4e197b1df5b7f7bbfd3e61a4864de46', '6e8393d7b8c8c1d492cbd897fa417689fe9a5b73cb6188a3b62af0bf8d4ddce6', '831fc315c7acafa292921fa99a7435ea3737143febf5d34c2050a42659547886']],
+    'index 6' => [6, ['7d70c24a4128d125523ddafcc2aca9bab70f8721a9afdd9713a75898b7ac283e', 'e1219f0f3075cf801c6cd0b99dd72bb39851a09f287075edab199b36fec7b92e']],
+]);
+
+it('verifies every audit path of every tree size up to 40', function (): void {
+    $tree = new MerkleTree;
+
+    foreach (range(1, 40) as $size) {
+        $leaves = merkleLeaves($size);
+        $root = (string) $tree->root($leaves);
+
+        foreach (range(0, $size - 1) as $index) {
+            expect($tree->verifyInclusion($leaves[$index], $index, $size, $tree->auditPath($leaves, $index), $root))->toBeTrue("{$index} of {$size}");
+        }
+    }
+});
+
+it('rejects a leaf at another position, another leaf, a shortened path or another tree size', function (): void {
+    $tree = new MerkleTree;
+    $leaves = merkleLeaves(7);
+    $root = (string) $tree->root($leaves);
+    $path = $tree->auditPath($leaves, 3);
+
+    expect($tree->verifyInclusion($leaves[3], 3, 7, $path, $root))->toBeTrue()
+        ->and($tree->verifyInclusion($leaves[3], 2, 7, $path, $root))->toBeFalse()
+        ->and($tree->verifyInclusion($leaves[4], 3, 7, $path, $root))->toBeFalse()
+        ->and($tree->verifyInclusion($leaves[3], 3, 7, array_slice($path, 0, 2), $root))->toBeFalse()
+        // The tree size comes from the anchor; one that changes the shape of the path fails.
+        ->and($tree->verifyInclusion($leaves[3], 3, 4, $path, $root))->toBeFalse()
+        ->and($tree->verifyInclusion($leaves[3], 7, 7, $path, $root))->toBeFalse();
+});
+
+it('has no audit path for a position outside the tree', function (): void {
+    (new MerkleTree)->auditPath(merkleLeaves(3), 3);
+})->throws(InvalidArgumentException::class);
+
+it('builds the audit paths of many leaves in linear time', function (): void {
+    $leaves = merkleLeaves(5000);
+    $tree = new MerkleTree;
+    $started = microtime(true);
+
+    $paths = $tree->auditPaths($leaves, range(0, 4999));
+
+    expect(microtime(true) - $started)->toBeLessThan(3.0)
+        ->and($paths[1234])->toBe($tree->auditPath($leaves, 1234))
+        ->and($tree->verifyInclusion($leaves[4999], 4999, 5000, $paths[4999], (string) $tree->root($leaves)))->toBeTrue();
+});
+
+it('gives the same audit paths in one pass as one by one', function (): void {
+    $tree = new MerkleTree;
+
+    foreach ([1, 2, 3, 5, 7, 8, 13, 33] as $size) {
+        $leaves = merkleLeaves($size);
+        $paths = $tree->auditPaths($leaves, range(0, $size - 1));
+
+        foreach (range(0, $size - 1) as $index) {
+            expect($paths[$index])->toBe($tree->auditPath($leaves, $index), "{$index} of {$size}");
+        }
+    }
+});

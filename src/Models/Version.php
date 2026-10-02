@@ -84,6 +84,18 @@ class Version extends Model
     }
 
     /**
+     * The snapshot as stored, canonically decoded.
+     *
+     * @return array<string, mixed>
+     *
+     * @throws \JsonException when the stored snapshot is no valid JSON (tampered with)
+     */
+    public function storedSnapshot(): array
+    {
+        return $this->decodeCanonical($this->getRawOriginal('snapshot')) ?? [];
+    }
+
+    /**
      * The snapshot with its personal attributes decrypted where the key of
      * their data subject still exists; shredded attributes are null.
      */

@@ -65,3 +65,10 @@ it('publishes the migrations under its tag in dependency order', function (): vo
             'create_integrity_subject_keys_table.php',
         ]);
 });
+
+it('publishes the template of the procedure documentation under its tag', function (): void {
+    $paths = ServiceProvider::pathsToPublish(ModelIntegrityServiceProvider::class, 'model-integrity-docs');
+
+    expect(array_values($paths))->toBe([base_path('docs/verfahrensdokumentation-model-integrity.md')])
+        ->and(file_exists((string) array_key_first($paths)))->toBeTrue();
+});

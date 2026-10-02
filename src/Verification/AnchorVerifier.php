@@ -122,13 +122,18 @@ class AnchorVerifier
         }
 
         $count = 0;
-        $root = $this->tree->root((function () use ($statement, &$count) {
-            foreach ($this->versions->between($statement->fromSequence, $statement->toSequence) as $hash) {
-                $count++;
 
-                yield $hash;
-            }
-        })());
+        try {
+            $root = $this->tree->root((function () use ($statement, &$count) {
+                foreach ($this->versions->between($statement->fromSequence, $statement->toSequence) as $hash) {
+                    $count++;
+
+                    yield $hash;
+                }
+            })());
+        } catch (InvalidArgumentException) {
+            return [IntegrityErrorType::AnchorMismatch, "attests versions {$statement->fromSequence} to {$statement->toSequence}, but their stored hashes are malformed."];
+        }
 
         if ($count !== $statement->toSequence - $statement->fromSequence + 1 || $root !== $statement->merkleRoot) {
             return [IntegrityErrorType::AnchorMismatch, "attests versions {$statement->fromSequence} to {$statement->toSequence} that differ from the stored ones."];
