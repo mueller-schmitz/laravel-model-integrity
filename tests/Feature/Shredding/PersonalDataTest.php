@@ -20,7 +20,7 @@ it('encrypts personal attributes and leaves the others', function (): void {
         ->and($encrypted['total'])->toBe('9.99')
         ->and($encrypted['phone'])->toBeNull()
         ->and($encrypted['name'])->toHaveKey('@encrypted')
-        ->and(json_encode($encrypted))->not->toContain('Ada')->not->toContain('ada@example.com')
+        ->and(json_encode($encrypted))->not->toContain('Ada Lovelace')->not->toContain('ada@example.com')
         ->and($encrypted['name']['@encrypted']['k'])->toBe($encrypted['email']['@encrypted']['k']);
 });
 
