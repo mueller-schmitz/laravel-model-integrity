@@ -8,6 +8,8 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-02
+
 ### Added
 
 - Anchors: `model-integrity:anchor` attests the versions recorded since the last anchor outside the database. A statement (anchor format 1, specified in the README) holds the range of the global sequence, the RFC 6962 Merkle root of its version hashes and the digest of the previous anchor; drivers anchor its SHA-256 digest
@@ -24,6 +26,8 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 ### Changed
 
 - `model-integrity:triggers` and `model-integrity:grants` cover the anchor tables
+- Requires `illuminate/http` (HTTP client for the OpenTimestamps and RFC 3161 drivers)
+- `GrantStatements::build()` takes a list of further append-only tables (`appendOnlyTables`) instead of `filesTable`
 
 ## [0.2.0] - 2026-09-29
 
@@ -80,7 +84,8 @@ First release.
 - Commands `model-integrity:install`, `model-integrity:grants` and `model-integrity:verify` (exit code 1 on violations)
 - Tested with PHP 8.3–8.5, Laravel 12 and 13, MySQL 8.0/8.4, MariaDB 10.11/11.4, PostgreSQL 14/17 and SQLite, including parallel writers, verification during writes and a database user restricted to the printed privileges
 
-[Unreleased]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mueller-schmitz/laravel-model-integrity/releases/tag/v0.1.0
