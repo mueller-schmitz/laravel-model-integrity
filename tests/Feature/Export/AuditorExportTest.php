@@ -208,6 +208,10 @@ it('writes an index.xml that is valid against the published DTD', function (): v
 })->skip(fn () => getenv('MI_GDPDU_DTD') === false, 'Set MI_GDPDU_DTD to the path of gdpdu-01-03-2019.dtd to validate against it.');
 
 it('completes the export when stored data was tampered with, and names the problems', function (string $table, array $change): void {
+    if (($change['snapshot'] ?? null) === '{broken' && DB::connection()->getDriverName() !== 'sqlite') {
+        $this->markTestSkipped('The JSON column of this database rejects invalid JSON.');
+    }
+
     DB::table($table)->where($table === 'integrity_versions' ? 'sequence' : 'id', $table === 'integrity_versions' ? 2 : DB::table($table)->min('id'))->update($change);
 
     expect(export($this->directory))->toBe(1);

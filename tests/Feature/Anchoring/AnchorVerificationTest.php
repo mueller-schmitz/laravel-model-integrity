@@ -259,6 +259,10 @@ it('includes the anchors in checkAll', function (): void {
 });
 
 it('reports tampered rows instead of failing on them', function (array $change, string $type): void {
+    if (($change['snapshot'] ?? null) === '{broken' && DB::connection()->getDriverName() !== 'sqlite') {
+        $this->markTestSkipped('The JSON column of this database rejects invalid JSON.');
+    }
+
     DB::table('integrity_versions')->where('sequence', 2)->update($change);
 
     $result = $this->checker->checkAll();
