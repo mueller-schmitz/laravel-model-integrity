@@ -59,6 +59,116 @@ class MerkleTree
         return bin2hex($root);
     }
 
+    /**
+     * The audit path of a leaf (RFC 6962, section 2.1.1): the sibling hashes
+     * from the leaf up to the root, which prove the leaf's inclusion without
+     * the other leaves. Holds all leaves of the tree in memory.
+     *
+     * @param  list<string>  $hashes  SHA-256 hashes in lowercase hex, in order
+     * @return list<string> lowercase hex, from the leaf up
+     */
+    public function auditPath(array $hashes, int $index): array
+    {
+        if ($index < 0 || $index >= count($hashes)) {
+            throw new InvalidArgumentException("Leaf {$index} is not part of a tree of ".count($hashes).' leaves.');
+        }
+
+        $leaves = array_map(fn (string $hash): string => hash('sha256', "\x00".$this->binary($hash), true), $hashes);
+
+        return array_map(bin2hex(...), $this->path($index, $leaves));
+    }
+
+    /**
+     * Checks an audit path (RFC 9162, section 2.1.3.2).
+     *
+     * @param  string  $hash  the leaf: a SHA-256 hash in lowercase hex, as passed to root()
+     * @param  list<string>  $path  from auditPath()
+     */
+    public function verifyInclusion(string $hash, int $index, int $size, array $path, string $root): bool
+    {
+        if ($index < 0 || $index >= $size) {
+            return false;
+        }
+
+        $fn = $index;
+        $sn = $size - 1;
+        $result = hash('sha256', "\x00".$this->binary($hash), true);
+
+        foreach ($path as $sibling) {
+            if ($sn === 0 || preg_match('/^[0-9a-f]{64}$/', $sibling) !== 1) {
+                return false;
+            }
+
+            $sibling = (string) hex2bin($sibling);
+
+            if (($fn & 1) === 1 || $fn === $sn) {
+                $result = $this->node($sibling, $result);
+
+                while (($fn & 1) === 0 && $fn !== 0) {
+                    $fn >>= 1;
+                    $sn >>= 1;
+                }
+            } else {
+                $result = $this->node($result, $sibling);
+            }
+
+            $fn >>= 1;
+            $sn >>= 1;
+        }
+
+        return $sn === 0 && hash_equals($root, bin2hex($result));
+    }
+
+    /**
+     * @param  list<string>  $leaves  binary leaf hashes
+     * @return list<string> binary sibling hashes
+     */
+    private function path(int $index, array $leaves): array
+    {
+        $count = count($leaves);
+
+        if ($count === 1) {
+            return [];
+        }
+
+        $split = 1;
+        while ($split * 2 < $count) {
+            $split *= 2;
+        }
+
+        return $index < $split
+            ? [...$this->path($index, array_slice($leaves, 0, $split)), $this->subtree(array_slice($leaves, $split))]
+            : [...$this->path($index - $split, array_slice($leaves, $split)), $this->subtree(array_slice($leaves, 0, $split))];
+    }
+
+    /**
+     * @param  list<string>  $leaves  binary leaf hashes
+     */
+    private function subtree(array $leaves): string
+    {
+        $count = count($leaves);
+
+        if ($count === 1) {
+            return $leaves[0];
+        }
+
+        $split = 1;
+        while ($split * 2 < $count) {
+            $split *= 2;
+        }
+
+        return $this->node($this->subtree(array_slice($leaves, 0, $split)), $this->subtree(array_slice($leaves, $split)));
+    }
+
+    private function binary(string $hash): string
+    {
+        if (preg_match('/^[0-9a-f]{64}$/', $hash) !== 1) {
+            throw new InvalidArgumentException('Merkle leaves must be SHA-256 hashes in lowercase hex.');
+        }
+
+        return (string) hex2bin($hash);
+    }
+
     private function node(string $left, string $right): string
     {
         return hash('sha256', "\x01".$left.$right, true);

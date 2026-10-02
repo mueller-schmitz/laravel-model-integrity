@@ -15,6 +15,9 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 - Table `integrity_subject_keys`; creating and shredding keys are versions in the global chain (type `model-integrity.subject`)
 - `Version::revealedSnapshot()` decrypts personal attributes where the key still exists
 - Verification compares personal attributes decrypted and reports personal data left in rows of shredded subjects
+- Auditor export `model-integrity:export`: GDPdU tables (`index.xml` + CSV) for the data access of the German tax authorities, exact version envelopes (JSON lines), anchors with proof files, Merkle inclusion proofs per version, verification report (JSON, HTML), format specification and checksums; filters by period and model; the GDPdU DTD is read from a configured path or downloaded and checked by its SHA-256
+- `MerkleTree::auditPath()` and `verifyInclusion()` (RFC 6962 / RFC 9162)
+- German template of the procedure documentation (`vendor:publish --tag=model-integrity-docs`)
 
 ### Changed
 
