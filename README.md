@@ -42,6 +42,17 @@ php artisan migrate
 
 `model-integrity:install` publishes the config and the migrations that are not published yet; running it again does not duplicate them. Prefer it over `vendor:publish --tag=model-integrity-migrations`, which copies all migrations again under new timestamps.
 
+### Upgrading from 0.3
+
+```bash
+composer require mueller-schmitz/laravel-model-integrity:^0.4
+php artisan model-integrity:install   # publishes the migration for subject keys
+php artisan migrate
+php artisan model-integrity:grants    # use the same options as at installation
+```
+
+Existing versions are unchanged. Personal attributes are encrypted from the first version recorded after you declare them; versions recorded before keep them in plain text.
+
 ### Upgrading from 0.2
 
 ```bash
@@ -80,7 +91,7 @@ The migrations install triggers that reject `UPDATE` and `DELETE` on `integrity_
 
 ### Privileges
 
-The application's database user should only read and append versions, files and anchors. Print the matching SQL for your database:
+The application's database user should only read and append versions, files and anchors, and read, add and update chain heads and subject keys. Print the matching SQL for your database:
 
 ```bash
 php artisan model-integrity:grants --user=app
@@ -192,6 +203,48 @@ IntegrityFiles::find($sha256);
 - `store()` reads any local path it is given: never pass paths from user input.
 - If the database transaction rolls back after the file was written, the file stays on the disk without a record. It is harmless (the same content gets the same name) and not deleted automatically.
 - Files are never deleted. Personal data in files cannot be removed until crypto-shredding arrives (planned for v0.4); keep it in mind before storing such files.
+
+### Personal data and crypto-shredding
+
+An append-only history conflicts with the right to erasure (GDPR art. 17). Declare the personal attributes of a model; they are recorded encrypted with a key per data subject, and shredding that key makes them unreadable in every version, while hashes, chains and anchors stay valid because they cover the ciphertext.
+
+```php
+class Order extends Model
+{
+    use HasIntegrity;
+
+    protected array $integrityPersonal = ['shipping_name', 'shipping_address'];
+    protected array $integrityAnonymized = ['shipping_name' => ''];   // allowed after shredding, besides null
+
+    public function integritySubject(): ?Model   // default: the model itself
+    {
+        return $this->customer;
+    }
+}
+```
+
+```php
+use MuellerSchmitz\ModelIntegrity\Facades\IntegritySubjects;
+
+IntegritySubjects::shred($customer, 'Erasure request #42');   // or: php artisan model-integrity:shred "App\Models\Customer" 42 --reason="..."
+IntegritySubjects::isShredded($customer);
+
+$version->revealedSnapshot()->snapshot;   // personal attributes decrypted, null once shredded
+$version->revealedSnapshot()->shredded;   // the attributes whose key was shredded
+```
+
+- A personal value is stored as `{"@encrypted": {"k": <key id>, "c": <ciphertext>}}` (AES-256-GCM over its canonical JSON); `null` stays `null`. The hash format is unchanged.
+- Keys are stored in `integrity_subject_keys`, wrapped with the application key (`APP_PREVIOUS_KEYS` keeps old wraps readable). Creating and shredding a key are versions in the global chain (type `model-integrity.subject`); the key itself is never part of a snapshot.
+- `model-integrity:shred` refuses a subject that never had a key (usually a typo in class or key); `--force` blocks such a subject from ever getting one.
+- Shredding drops the key and keeps the row as a tombstone, so the subject never gets a new key. Afterwards only `null` or the declared anonymized values can be recorded for it; anything else throws a `ShreddedSubjectException`, so no plain personal data reaches the history.
+- **Anonymize the rows yourself.** Shredding does not change your tables: retention periods and what to keep are decisions of your application. Verification reports personal attributes of shredded subjects that still hold data, and compares the other attributes as usual. Models in `immutable` mode cannot be updated; anonymize their rows with SQL, ideally in a documented maintenance step.
+- `$integrityAnonymized` values are compared in the form a snapshot holds them (decimals as strings, dates as ISO strings); attributes with an `encrypted` cast can only be anonymized to `null`.
+- Resolve the subject from the current attributes. Belongs-to relations whose foreign key changed are reloaded before the subject is resolved; verification reports versions encrypted with the key of another subject than the current one.
+- If `integritySubject()` returns `null`, the model itself is the subject. Changing the morph class of a subject model (e.g. introducing a morph map) gives the same person a new key; shred under both names.
+- `reason` and `context` are stored in plain text: never put personal data there. Versions recorded before the attributes were declared personal (or before 0.4) keep them in plain text and are not affected by shredding.
+- Rotating `APP_KEY`: old wraps stay readable through `APP_PREVIOUS_KEYS`. Removing a previous key makes every key wrapped with it unreadable – the same as shredding all those subjects – and verification reports their personal data as unreadable.
+- A key removed or cleared outside the package (without shredding) is reported, not taken for a shredding.
+- **Limits:** the keys live in the same database, so backups contain them until those backups expire – shredding is complete only then. Logs, caches, queues, search indexes and copies outside the integrity tables are not covered. Files stored with `IntegrityFiles` are not encrypted.
 
 ### Relations
 

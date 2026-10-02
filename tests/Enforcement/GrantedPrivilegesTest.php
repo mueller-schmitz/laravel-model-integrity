@@ -9,8 +9,11 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use MuellerSchmitz\ModelIntegrity\Database\AppendOnlyTriggers;
 use MuellerSchmitz\ModelIntegrity\Facades\IntegrityFiles;
+use MuellerSchmitz\ModelIntegrity\Facades\IntegritySubjects;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Contract;
+use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Customer;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
+use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Order;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Post;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Tag;
 use MuellerSchmitz\ModelIntegrity\Tests\Support\OpenTimestampsFake;
@@ -74,7 +77,7 @@ beforeEach(function (): void {
         ->each(fn (string $statement) => $this->admin->unprepared($statement));
 
     // The application's own tables, as any application user has them.
-    foreach (['invoices', 'posts', 'tags', 'post_tag', 'contracts'] as $table) {
+    foreach (['invoices', 'posts', 'tags', 'post_tag', 'contracts', 'customers', 'orders'] as $table) {
         $this->admin->unprepared($this->admin->getDriverName() === 'pgsql'
             ? "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE \"{$table}\" TO \"".RESTRICTED_USER.'"'
             : "GRANT SELECT, INSERT, UPDATE, DELETE ON `{$this->admin->getDatabaseName()}`.`{$table}` TO '".RESTRICTED_USER."'@'%'");
@@ -182,6 +185,20 @@ it('lets the application upgrade OpenTimestamps proofs', function (): void {
     expect(Artisan::call('model-integrity:anchor-upgrade'))->toBe(0)
         ->and($this->restricted->table('integrity_anchor_proofs')->count())->toBe(2)
         ->and(app(IntegrityChecker::class)->checkAll()->errors()->map(fn ($e) => (string) $e)->all())->toBe([]);
+});
+
+it('lets the application record personal data, shred a subject and verify', function (): void {
+    config(['model-integrity.connection' => 'mi_restricted']);
+
+    $customer = Customer::on('mi_restricted')->create(['number' => 'C-1', 'name' => 'Ada', 'email' => 'ada@example.com']);
+    Order::on('mi_restricted')->create(['customer_id' => $customer->id, 'number' => 'O-1', 'shipping_name' => 'Ada', 'total' => '1.00']);
+    IntegritySubjects::shred($customer, 'request #42');
+    $customer->refresh()->update(['name' => 'deleted', 'email' => null]);
+    Order::on('mi_restricted')->first()->update(['shipping_name' => '']);
+
+    expect(app(IntegrityChecker::class)->checkAll()->errors()->map(fn ($e) => (string) $e)->all())->toBe([])
+        ->and(fn () => $this->restricted->table('integrity_subject_keys')->delete())
+        ->toThrow(QueryException::class, $this->restricted->getDriverName() === 'pgsql' ? 'permission denied' : 'denied');
 });
 
 it('allows the shared lock the file store uses to find committed records on MySQL and MariaDB', function (): void {

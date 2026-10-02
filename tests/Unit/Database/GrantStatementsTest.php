@@ -91,3 +91,13 @@ it('quotes identifiers', function (): void {
 it('rejects unsupported drivers', function (): void {
     $this->grants->build('sqlsrv', 'app', '%', 'db', 'integrity_versions', 'integrity_heads');
 })->throws(InvalidArgumentException::class, 'sqlsrv');
+
+it('grants reading, adding and updating, but not deleting, on updatable tables', function (): void {
+    $mysql = sqlOnly($this->grants->build('mysql', 'app', '%', 'shop', 'integrity_versions', 'integrity_heads', updatableTables: ['integrity_subject_keys']));
+    $pgsql = sqlOnly($this->grants->build('pgsql', 'app', '%', 'shop', 'integrity_versions', 'integrity_heads', updatableTables: ['integrity_subject_keys']));
+
+    expect($mysql)->toContain("GRANT SELECT, INSERT, UPDATE ON `shop`.`integrity_subject_keys` TO 'app'@'%';")
+        ->and($pgsql)->toContain('REVOKE ALL ON TABLE "integrity_subject_keys" FROM "app";')
+        ->toContain('GRANT SELECT, INSERT, UPDATE ON TABLE "integrity_subject_keys" TO "app";')
+        ->and(implode("\n", [...$mysql, ...$pgsql]))->not->toContain('DELETE ON')->not->toContain('integrity_subject_keys_id_seq');
+});

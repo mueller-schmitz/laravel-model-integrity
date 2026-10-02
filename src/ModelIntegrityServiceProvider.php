@@ -15,15 +15,18 @@ use MuellerSchmitz\ModelIntegrity\Console\AnchorExportCommand;
 use MuellerSchmitz\ModelIntegrity\Console\AnchorUpgradeCommand;
 use MuellerSchmitz\ModelIntegrity\Console\GrantsCommand;
 use MuellerSchmitz\ModelIntegrity\Console\InstallCommand;
+use MuellerSchmitz\ModelIntegrity\Console\ShredCommand;
 use MuellerSchmitz\ModelIntegrity\Console\SnapshotCommand;
 use MuellerSchmitz\ModelIntegrity\Console\TriggersCommand;
 use MuellerSchmitz\ModelIntegrity\Console\VerifyCommand;
 use MuellerSchmitz\ModelIntegrity\Files\FileStore;
 use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
+use MuellerSchmitz\ModelIntegrity\Models\DataSubject;
 use MuellerSchmitz\ModelIntegrity\Models\StoredFile;
 use MuellerSchmitz\ModelIntegrity\Recording\ActorResolver;
 use MuellerSchmitz\ModelIntegrity\Recording\SnapshotBuilder;
+use MuellerSchmitz\ModelIntegrity\Shredding\SubjectKeys;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityChecker;
 
 class ModelIntegrityServiceProvider extends ServiceProvider
@@ -36,6 +39,7 @@ class ModelIntegrityServiceProvider extends ServiceProvider
         $this->app->singleton(Hasher::class);
         $this->app->singleton(SnapshotBuilder::class);
         $this->app->scoped(ActorResolver::class);
+        $this->app->scoped(SubjectKeys::class);
         $this->app->singleton(IntegrityChecker::class);
         $this->app->singleton(FileStore::class);
         $this->app->singleton(AnchorManager::class);
@@ -44,7 +48,7 @@ class ModelIntegrityServiceProvider extends ServiceProvider
     public function boot(): void
     {
         // Merged into the app's morph map, so versions of stored files resolve.
-        Relation::morphMap([StoredFile::MORPH_ALIAS => StoredFile::class]);
+        Relation::morphMap([StoredFile::MORPH_ALIAS => StoredFile::class, DataSubject::MORPH_ALIAS => DataSubject::class]);
 
         // An actor set inside a job must not leak into the next job of the worker.
         $forgetActor = fn () => $this->app->make(ActorResolver::class)->forget();
@@ -61,6 +65,7 @@ class ModelIntegrityServiceProvider extends ServiceProvider
             AnchorUpgradeCommand::class,
             GrantsCommand::class,
             InstallCommand::class,
+            ShredCommand::class,
             SnapshotCommand::class,
             TriggersCommand::class,
             VerifyCommand::class,

@@ -8,6 +8,18 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- Crypto-shredding: personal attributes (`$integrityPersonal`) are recorded encrypted (AES-256-GCM) with a key per data subject (`integritySubject()`); hashes cover the ciphertext, so shredding the key leaves chains and anchors valid
+- `IntegritySubjects::shred()` / `model-integrity:shred` drop a subject's key for good (tombstone); afterwards only `null` or `$integrityAnonymized` values can be recorded for the subject
+- Table `integrity_subject_keys`; creating and shredding keys are versions in the global chain (type `model-integrity.subject`)
+- `Version::revealedSnapshot()` decrypts personal attributes where the key still exists
+- Verification compares personal attributes decrypted and reports personal data left in rows of shredded subjects
+
+### Changed
+
+- `GrantStatements::build()` takes tables that may be read, added to and updated (`updatableTables`); `model-integrity:grants` includes the subject keys table
+
 ## [0.3.0] - 2026-10-02
 
 ### Added

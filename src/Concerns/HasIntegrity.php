@@ -7,14 +7,20 @@ namespace MuellerSchmitz\ModelIntegrity\Concerns;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Config;
 use InvalidArgumentException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\ImmutableModelException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
+use MuellerSchmitz\ModelIntegrity\Exceptions\ShreddedSubjectException;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
 use MuellerSchmitz\ModelIntegrity\Recording\SnapshotBuilder;
 use MuellerSchmitz\ModelIntegrity\Recording\VersionRecorder;
+use MuellerSchmitz\ModelIntegrity\Shredding\PersonalData;
+use MuellerSchmitz\ModelIntegrity\Shredding\SubjectKey;
+use MuellerSchmitz\ModelIntegrity\Shredding\SubjectKeys;
+use MuellerSchmitz\ModelIntegrity\Shredding\SubjectName;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityChecker;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityResult;
 use ReflectionProperty;
@@ -28,6 +34,10 @@ use ReflectionProperty;
  * - list<string> $integrityExcept: attributes excluded from snapshots
  * - list<string> $integrityRelations: relations whose keys are part of every snapshot
  * - int $integritySchemaVersion: version of the snapshot schema
+ * - list<string> $integrityPersonal: personal attributes, recorded encrypted with
+ *   the key of the data subject (integritySubject(), by default the model itself)
+ * - array<string, mixed> $integrityAnonymized: values personal attributes may
+ *   hold after the subject's key was shredded (besides null)
  *
  * save() and delete() run in a transaction, so the model change and its
  * version are committed together or not at all.
@@ -267,17 +277,115 @@ trait HasIntegrity
     }
 
     /**
+     * @return list<string>
+     */
+    public function getIntegrityPersonal(): array
+    {
+        return $this->integrityProperty('integrityPersonal', []);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function getIntegrityAnonymized(): array
+    {
+        return $this->integrityProperty('integrityAnonymized', []);
+    }
+
+    /**
+     * The data subject whose key encrypts this model's personal attributes,
+     * e.g. the customer of an order. Defaults to the model itself.
+     */
+    public function integritySubject(): ?Model
+    {
+        return $this;
+    }
+
+    /**
+     * The data subject and its key (null once shredded). Creating a key
+     * records a version of its own, so this runs before the recorder locks
+     * the chain head for this model.
+     *
+     * @return array{string|null, SubjectKey|null}
+     */
+    protected function resolveIntegritySubjectKey(): array
+    {
+        if ($this->getIntegrityPersonal() === []) {
+            return [null, null];
+        }
+
+        $subject = SubjectName::of($this->currentIntegritySubject());
+
+        try {
+            return [$subject, app(SubjectKeys::class)->keyFor($subject)];
+        } catch (ShreddedSubjectException) {
+            // Only anonymized values can be recorded; PersonalData checks them.
+            return [$subject, null];
+        }
+    }
+
+    /**
+     * integritySubject() after dropping loaded belongs-to relations whose
+     * foreign key changed: Eloquent keeps them, so a reassigned order would
+     * otherwise still name its former customer.
+     */
+    protected function currentIntegritySubject(): Model
+    {
+        foreach (array_keys($this->getRelations()) as $name) {
+            if (! is_string($name) || ! method_exists($this, $name)) {
+                continue;
+            }
+
+            $relation = $this->{$name}();
+
+            if ($relation instanceof BelongsTo) {
+                $foreignKey = $relation->getForeignKeyName();
+
+                if ($this->isDirty($foreignKey) || $this->wasChanged($foreignKey)) {
+                    $this->unsetRelation($name);
+                }
+            }
+        }
+
+        return $this->integritySubject() ?? $this;
+    }
+
+    /**
+     * Encrypts the personal attributes of a snapshot before it is recorded.
+     *
+     * @param  array<string, mixed>  $snapshot
+     * @return array<string, mixed>
+     */
+    protected function protectIntegritySnapshot(array $snapshot, ?string $subject, ?SubjectKey $key): array
+    {
+        $personal = $this->getIntegrityPersonal();
+
+        if ($personal === [] || $subject === null) {
+            return $snapshot;
+        }
+
+        $missing = array_values(array_diff($personal, array_keys($snapshot)));
+
+        if ($missing !== []) {
+            throw IntegrityConfigurationException::unknownPersonalAttributes($this, $missing);
+        }
+
+        return app(PersonalData::class)->encryptWith($snapshot, $personal, $key, $subject, $this->getIntegrityAnonymized());
+    }
+
+    /**
      * @param  array<string, mixed>|null  $snapshot
      */
     protected function recordIntegrityVersion(string $event, ?array $snapshot = null): Version
     {
         $this->getIntegrityMode();
+        [$subject, $key] = $this->resolveIntegritySubjectKey();
 
         return app(VersionRecorder::class)->record(
             $this,
             $event,
             // Built lazily, after the recorder holds the chain head lock.
-            $snapshot ?? fn (): array => $this->buildIntegritySnapshot(),
+            fn (): array => $this->protectIntegritySnapshot($snapshot ?? $this->buildIntegritySnapshot(), $subject, $key),
             $this->getIntegritySchemaVersion(),
             $this->integrityReason,
             $this->integrityContext,

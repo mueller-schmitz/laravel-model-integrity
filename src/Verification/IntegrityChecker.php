@@ -7,6 +7,7 @@ namespace MuellerSchmitz\ModelIntegrity\Verification;
 use Carbon\CarbonImmutable;
 use Closure;
 use DateTimeInterface;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Relation;
@@ -21,13 +22,19 @@ use MuellerSchmitz\ModelIntegrity\Concerns\HasIntegrity;
 use MuellerSchmitz\ModelIntegrity\Events\IntegrityViolationDetected;
 use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\InvalidEnvelopeException;
+use MuellerSchmitz\ModelIntegrity\Exceptions\MissingSubjectKeyException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\UnsupportedHashFormatException;
+use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
+use MuellerSchmitz\ModelIntegrity\Models\DataSubject;
 use MuellerSchmitz\ModelIntegrity\Models\StoredFile;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
 use MuellerSchmitz\ModelIntegrity\Recording\ChainName;
 use MuellerSchmitz\ModelIntegrity\Recording\ModelOptions;
 use MuellerSchmitz\ModelIntegrity\Recording\SnapshotBuilder;
+use MuellerSchmitz\ModelIntegrity\Shredding\PersonalData;
+use MuellerSchmitz\ModelIntegrity\Shredding\SubjectKeys;
+use MuellerSchmitz\ModelIntegrity\Shredding\SubjectName;
 use Throwable;
 
 /**
@@ -64,6 +71,7 @@ class IntegrityChecker
         private readonly Hasher $hasher,
         private readonly SnapshotBuilder $snapshots,
         private readonly AnchorVerifier $anchors,
+        private readonly CanonicalSerializer $serializer,
     ) {}
 
     public function checkModel(Model $model): IntegrityResult
@@ -838,11 +846,88 @@ class IntegrityChecker
 
         $options = ModelOptions::of($model);
         $current = $this->snapshots->build($model, $options->except, $options->relations);
+        $recorded = $last->snapshot;
 
-        if ($current !== $last->snapshot) {
-            $changed = $this->changedKeys($last->snapshot, $current);
+        // Resolved per check: it holds the subject keys of one request or job.
+        $personalData = app(PersonalData::class);
+
+        try {
+            $revealed = $personalData->reveal($recorded);
+        } catch (MissingSubjectKeyException $e) {
+            $errors[] = $drift("Personal attributes of version {$last->version} cannot be read: {$e->getMessage()}");
+
+            return;
+        } catch (DecryptException) {
+            $errors[] = $drift("Personal attributes of version {$last->version} cannot be decrypted with their key.");
+
+            return;
+        }
+
+        $recorded = $revealed->snapshot;
+
+        if (($subjectProblem = $this->subjectKeyProblem($model, $last)) !== null) {
+            $errors[] = $drift($subjectProblem);
+        }
+
+        $leftovers = [];
+
+        // Shredded values are unknown; the row must not hold personal data any more.
+        foreach ($revealed->shredded as $attribute) {
+            $value = $current[$attribute] ?? null;
+            $anonymized = array_key_exists($attribute, $options->anonymized) ? $this->serializer->normalize($options->anonymized[$attribute]) : null;
+
+            if ($value !== null && $value !== $anonymized) {
+                $leftovers[] = $attribute;
+            }
+
+            $current[$attribute] = $recorded[$attribute] = null;
+        }
+
+        if ($leftovers !== []) {
+            $errors[] = $drift('The key of the data subject was shredded, but ['.implode(', ', $leftovers).'] still hold data; anonymize the model.');
+        }
+
+        if ($model instanceof DataSubject && ($model->key === null) !== ($model->shredded_at !== null)) {
+            $errors[] = $drift($model->key === null ? 'The key was removed without shredding.' : 'The subject is marked as shredded, but its key still exists.');
+        }
+
+        if ($current !== $recorded) {
+            $changed = $this->changedKeys($recorded, $current);
             $errors[] = $drift('The current state differs from version '.$last->version.' in ['.implode(', ', $changed).'].');
         }
+    }
+
+    /**
+     * Personal data must be encrypted with the key of the model's current
+     * data subject; otherwise shredding that subject would miss it.
+     */
+    private function subjectKeyProblem(Model $model, Version $last): ?string
+    {
+        if (! method_exists($model, 'integritySubject')) {
+            return null;
+        }
+
+        $keyIds = [];
+
+        foreach ($last->snapshot as $value) {
+            $encrypted = app(PersonalData::class)->encrypted($value);
+
+            if ($encrypted !== null) {
+                $keyIds[$encrypted['k']] = true;
+            }
+        }
+
+        if ($keyIds === []) {
+            return null;
+        }
+
+        $subject = $model->integritySubject();
+        $name = SubjectName::of($subject instanceof Model ? $subject : $model);
+        $expected = app(SubjectKeys::class)->keyIdFor($name);
+
+        return array_keys($keyIds) === [$expected]
+            ? null
+            : "Personal attributes of version {$last->version} are encrypted with the key of another data subject than [{$name}].";
     }
 
     /**

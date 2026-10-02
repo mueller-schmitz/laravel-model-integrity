@@ -37,6 +37,7 @@ class GrantsCommand extends Command
             $prefix.Config::string('model-integrity.tables.anchors', 'integrity_anchors'),
             $prefix.Config::string('model-integrity.tables.anchor_proofs', 'integrity_anchor_proofs'),
         ];
+        $updatable = [$prefix.Config::string('model-integrity.tables.subject_keys', 'integrity_subject_keys')];
 
         $driver = $connection->getDriverName();
         $user = $this->user($connection);
@@ -60,10 +61,11 @@ class GrantsCommand extends Command
             $connection->getDatabaseName(),
             $versions,
             $heads,
-            $allTables ? $this->otherTables($connection, [$versions, $heads, ...$appendOnly]) : [],
+            $allTables ? $this->otherTables($connection, [$versions, $heads, ...$appendOnly, ...$updatable]) : [],
             $allTables,
             $allTables ? $this->views($connection) : [],
             $appendOnly,
+            $updatable,
         );
 
         foreach ($lines as $line) {

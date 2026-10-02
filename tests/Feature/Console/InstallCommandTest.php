@@ -12,6 +12,7 @@ const ALL_MIGRATIONS = [
     'create_integrity_files_append_only_triggers.php',
     'create_integrity_anchors_tables.php',
     'create_integrity_anchors_append_only_triggers.php',
+    'create_integrity_subject_keys_table.php',
 ];
 
 function publishedMigrations(): array
@@ -69,7 +70,7 @@ it('publishes only the migrations missing after an upgrade', function (): void {
     }
 
     $this->artisan('model-integrity:install')
-        ->expectsOutputToContain('4 new migrations')
+        ->expectsOutputToContain('5 new migrations')
         ->assertExitCode(0);
 
     $names = publishedMigrationNames();
