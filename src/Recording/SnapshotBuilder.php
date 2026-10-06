@@ -53,9 +53,10 @@ class SnapshotBuilder
      * @param  list<string>  $except
      * @param  list<string>  $relations
      * @param  bool  $lock  read the row with a row lock, e.g. before deleting it
+     * @param  list<string>  $omitNull  attributes left out while they are null
      * @return array<string, mixed>
      */
-    public function build(Model $model, array $except = [], array $relations = [], bool $lock = false): array
+    public function build(Model $model, array $except = [], array $relations = [], bool $lock = false, array $omitNull = []): array
     {
         $row = $model->getConnection()
             ->table($model->getTable())
@@ -69,6 +70,12 @@ class SnapshotBuilder
 
         /** @var array<string, mixed> $attributes */
         $attributes = array_diff_key((array) $row, array_flip($except));
+
+        foreach ($omitNull as $attribute) {
+            if (($attributes[$attribute] ?? null) === null) {
+                unset($attributes[$attribute]);
+            }
+        }
 
         $snapshot = $this->normalizeAttributes($model, $attributes);
 

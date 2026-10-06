@@ -83,6 +83,10 @@ it('keeps the index names of all integrity tables within the identifier limit', 
     expect($tooLong)->toBe([]);
 });
 
+it('adds the key of the data subject to the files table', function (): void {
+    expect(Schema::hasColumns('integrity_files', ['id', 'sha256', 'disk', 'path', 'size', 'mime', 'created_at', 'key_id']))->toBeTrue();
+});
+
 it('creates the subject keys table with a unique subject', function (): void {
     expect(Schema::hasColumns('integrity_subject_keys', ['id', 'subject', 'key', 'created_at', 'shredded_at']))->toBeTrue()
         ->and(collect(Schema::getIndexes('integrity_subject_keys'))->where('unique', true)->pluck('columns')->all())->toContain(['subject']);

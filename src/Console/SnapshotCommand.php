@@ -83,7 +83,7 @@ class SnapshotCommand extends Command
             if ($last === null) {
                 $this->record($model, 'created', $reason);
                 $recorded++;
-            } elseif ($last->schema_version < $options->schemaVersion || $this->differs($last, $snapshots->build($model, $options->except, $options->relations))) {
+            } elseif ($last->schema_version < $options->schemaVersion || $this->differs($last, $snapshots->build($model, $options->except, $options->relations, omitNull: $options->omitNull))) {
                 $this->record($model, 'snapshot', $reason);
                 $recorded++;
             }

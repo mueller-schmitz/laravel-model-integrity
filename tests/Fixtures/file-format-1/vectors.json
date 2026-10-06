@@ -1,0 +1,29 @@
+{
+    "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+    "vectors": [
+        {
+            "description": "empty",
+            "file": "empty.bin",
+            "plaintext_size": 0,
+            "plaintext_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+            "description": "short",
+            "file": "short.bin",
+            "plaintext_size": 32,
+            "plaintext_sha256": "fe01a917a071cf995f8c379da6c7760b502c180a93a7e6ec0c0d599076bfd1de"
+        },
+        {
+            "description": "one-chunk",
+            "file": "one-chunk.bin",
+            "plaintext_size": 65536,
+            "plaintext_sha256": "d8b2af1c85cdb4588e978aed5875e12cbfd20f68009823cf914b40cf41d8e4ce"
+        },
+        {
+            "description": "two-chunks",
+            "file": "two-chunks.bin",
+            "plaintext_size": 65541,
+            "plaintext_sha256": "bd817277d3aeb84e6c1f76475657cf4a81789b3f8c1243407a0622e5d1055e92"
+        }
+    ]
+}

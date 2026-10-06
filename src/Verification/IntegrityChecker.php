@@ -8,6 +8,7 @@ use Carbon\CarbonImmutable;
 use Closure;
 use DateTimeInterface;
 use Illuminate\Contracts\Encryption\DecryptException;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -26,6 +27,7 @@ use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\InvalidEnvelopeException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\MissingSubjectKeyException;
 use MuellerSchmitz\ModelIntegrity\Exceptions\UnsupportedHashFormatException;
+use MuellerSchmitz\ModelIntegrity\Files\FileCipher;
 use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
 use MuellerSchmitz\ModelIntegrity\Models\DataSubject;
@@ -768,12 +770,48 @@ class IntegrityChecker
                 if (! hash_equals($file->sha256, hash_final($context))) {
                     return 'has a content that does not match its hash';
                 }
+
+                return $this->fileKeyProblem($file, $disk);
             }
         } catch (Throwable $e) {
             return "cannot be checked on disk [{$file->disk}]: ".$e->getMessage();
         }
 
         return null;
+    }
+
+    /**
+     * An encrypted file must open with the key of its data subject. The key
+     * is in no snapshot, so a key replaced in the database shows only here.
+     * Nothing is left to check once the key was shredded.
+     */
+    private function fileKeyProblem(StoredFile $file, Filesystem $disk): ?string
+    {
+        if ($file->key_id === null) {
+            return null;
+        }
+
+        // Resolved per check: it holds the subject keys of one request or job.
+        $keys = app(SubjectKeys::class);
+        $key = $keys->find($file->key_id);
+
+        if ($key === null) {
+            return $keys->state($file->key_id) === 'shredded'
+                ? null
+                : "is encrypted with the data subject key [{$file->key_id}], which was removed without shredding";
+        }
+
+        $stream = $disk->readStream($file->path);
+
+        if (! is_resource($stream)) {
+            return "cannot be read from disk [{$file->disk}]";
+        }
+
+        try {
+            return app(FileCipher::class)->opensWith($stream, $key) ? null : 'cannot be decrypted with the key of its data subject';
+        } finally {
+            fclose($stream);
+        }
     }
 
     /**
@@ -835,7 +873,7 @@ class IntegrityChecker
         }
 
         $options = ModelOptions::of($model);
-        $current = $this->snapshots->build($model, $options->except, $options->relations);
+        $current = $this->snapshots->build($model, $options->except, $options->relations, omitNull: $options->omitNull);
         $recorded = $this->snapshotOf($last);
 
         if ($recorded === null) {

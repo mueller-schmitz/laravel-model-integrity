@@ -80,6 +80,15 @@ try {
                 fclose($stream);
             }
         }
+    } elseif ($mode === 'encrypted-files') {
+        // All workers store files of the same new subject and compete for its key.
+        for ($i = 1; $i <= (int) $writes; $i++) {
+            $stream = fopen('php://memory', 'r+');
+            fwrite($stream, "worker {$worker} write {$i}");
+            rewind($stream);
+            IntegrityFiles::store($stream, subject: (string) $sharedId);
+            fclose($stream);
+        }
     } elseif ($mode === 'deletes') {
         // $sharedId holds comma-separated ids; every worker updates all of them
         // and finally deletes its own, racing with the others' updates.

@@ -12,7 +12,7 @@ This export was written by `mueller-schmitz/laravel-model-integrity`. This file 
 | `anchors.csv`, `proofs/*.json` | Anchors and their canonical statements |
 | `anchor_proofs.csv`, `proofs/*.ots`, `proofs/*.tsr` | Proofs of the anchors (OpenTimestamps, RFC 3161) |
 | `inclusion_proofs.csv` | Merkle inclusion proof of every exported version in its anchor |
-| `files.csv` | Stored files (content-addressed by SHA-256) |
+| `files.csv` | Stored files (content-addressed by SHA-256); `sha256` and `size` describe the file as stored, which is encrypted with the key of a data subject if `key_id` is set |
 | `report.json`, `report.html` | Verification result at the time of the export, the global sequence the export covers (`head_sequence`) and data that could not be exported as stored (`export_problems`) |
 | `SHA256SUMS` | SHA-256 of every file (`sha256sum -c SHA256SUMS`) |
 

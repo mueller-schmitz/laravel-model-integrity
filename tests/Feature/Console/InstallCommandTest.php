@@ -13,11 +13,12 @@ const ALL_MIGRATIONS = [
     'create_integrity_anchors_tables.php',
     'create_integrity_anchors_append_only_triggers.php',
     'create_integrity_subject_keys_table.php',
+    'add_key_id_to_integrity_files_table.php',
 ];
 
 function publishedMigrations(): array
 {
-    return File::glob(database_path('migrations/*_create_integrity_*.php'));
+    return File::glob(database_path('migrations/*_integrity_*.php'));
 }
 
 /**
@@ -70,7 +71,7 @@ it('publishes only the migrations missing after an upgrade', function (): void {
     }
 
     $this->artisan('model-integrity:install')
-        ->expectsOutputToContain('5 new migrations')
+        ->expectsOutputToContain('6 new migrations')
         ->assertExitCode(0);
 
     $names = publishedMigrationNames();

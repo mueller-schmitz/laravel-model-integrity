@@ -8,6 +8,27 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- Encrypted files: `IntegrityFiles::store($file, subject: $customer)` encrypts a file with the key of its data subject before it is stored (libsodium secretstream; needs `ext-sodium`). Hash and size refer to the encrypted file, so chains, anchors and file checks stay valid when the key is shredded and the file becomes unreadable
+- File encryption format 1, specified in the README and pinned by reference files
+- `StoredFile::isEncrypted()` and `isShredded()`; `readStream()` and `contents()` decrypt encrypted files
+- Column `integrity_files.key_id` (new migration). It is part of the snapshot of encrypted files only; files stored before keep verifying without a new baseline
+- `$integrityOmitNull`: attributes left out of the snapshot while they are null, for nullable columns added later
+- Auditor export: `files.csv` lists the key of encrypted files (`key_id`)
+- `checkFiles()` and `verify --files` open every encrypted file with the key of its data subject and report a key that was replaced or removed in the database
+
+### Fixed
+
+- `IntegritySubjects` held on to the key store of the request or job in which it was first resolved; it now resolves it per call, so shredding always drops the key from the cache that readers use
+
+### Changed
+
+- `FileStore` takes a `FileCipher` in its constructor; `SnapshotBuilder::build()` takes the attributes to omit while null
+
+### Documentation
+
+- The README no longer says that the crypto-shredding of 0.4 covers files: files are shredded only if they were stored for a subject
 ## [0.4.1] - 2026-10-07
 
 ### Fixed

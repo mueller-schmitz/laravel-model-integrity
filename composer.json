@@ -40,7 +40,8 @@
         "symfony/process": "^7.0"
     },
     "suggest": {
-        "ext-openssl": "Needed by the RFC 3161 anchor driver to check time-stamp tokens"
+        "ext-openssl": "Needed by the RFC 3161 anchor driver to check time-stamp tokens",
+        "ext-sodium": "Needed to store files encrypted with the key of a data subject"
     },
     "autoload": {
         "psr-4": {

@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use MuellerSchmitz\ModelIntegrity\Models\StoredFile;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Invoice;
 use MuellerSchmitz\ModelIntegrity\Tests\Fixtures\Models\Post;
@@ -129,6 +130,29 @@ it('stores identical files once under parallel writers', function (): void {
         expectIntactChains($expected);
 
         expect(app(IntegrityChecker::class)->checkFiles()->passes())->toBeTrue();
+    } finally {
+        File::deleteDirectory($root);
+    }
+});
+
+it('encrypts the files of a new subject with one key under parallel writers', function (): void {
+    $root = sys_get_temp_dir().'/mi-files-'.uniqid();
+    config(['filesystems.disks.integrity' => ['driver' => 'local', 'root' => $root], 'model-integrity.files.disk' => 'integrity']);
+
+    try {
+        // Per worker and write one file, plus the key of the subject.
+        $expected = 1 + WORKERS * WRITES_PER_WORKER;
+
+        expect(runWorkers('encrypted-files', 'customer:1', 'encrypted files', $expected, ['MI_FILES_ROOT' => $root]))->toBe([])
+            ->and(DB::table('integrity_subject_keys')->count())->toBe(1)
+            ->and(DB::table('integrity_files')->count())->toBe($expected - 1)
+            ->and(DB::table('integrity_files')->distinct()->pluck('key_id')->all())->toBe([DB::table('integrity_subject_keys')->value('id')]);
+
+        expectIntactChains($expected);
+
+        expect(app(IntegrityChecker::class)->checkFiles()->passes())->toBeTrue()
+            ->and(StoredFile::query()->get()->map(fn (StoredFile $file): string => $file->contents())->sort()->values()->all())
+            ->toBe(collect(range(1, WORKERS))->crossJoin(range(1, WRITES_PER_WORKER))->map(fn (array $pair): string => "worker {$pair[0]} write {$pair[1]}")->sort()->values()->all());
     } finally {
         File::deleteDirectory($root);
     }

@@ -14,17 +14,13 @@ use Illuminate\Database\Eloquent\Model;
  */
 class Subjects
 {
-    public function __construct(
-        private readonly SubjectKeys $keys,
-    ) {}
-
     /**
      * @param  Model|string  $subject  the subject model, or its `<morph class>:<key>`
      * @return string|null the id of the dropped key, null if there was none or it was shredded before
      */
     public function shred(Model|string $subject, ?string $reason = null): ?string
     {
-        return $this->keys->shred($this->name($subject), $reason);
+        return $this->keys()->shred($this->name($subject), $reason);
     }
 
     /**
@@ -32,12 +28,21 @@ class Subjects
      */
     public function exists(Model|string $subject): bool
     {
-        return $this->keys->exists($this->name($subject));
+        return $this->keys()->exists($this->name($subject));
     }
 
     public function isShredded(Model|string $subject): bool
     {
-        return $this->keys->isShredded($this->name($subject));
+        return $this->keys()->isShredded($this->name($subject));
+    }
+
+    /**
+     * Resolved per call: the keys are bound per request or job, and shredding
+     * must drop the key from the instance that readers of this scope use.
+     */
+    private function keys(): SubjectKeys
+    {
+        return app(SubjectKeys::class);
     }
 
     private function name(Model|string $subject): string
