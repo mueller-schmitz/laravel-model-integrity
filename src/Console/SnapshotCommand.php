@@ -7,10 +7,10 @@ namespace MuellerSchmitz\ModelIntegrity\Console;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Model;
 use MuellerSchmitz\ModelIntegrity\Console\Concerns\ResolvesModelClasses;
+use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
 use MuellerSchmitz\ModelIntegrity\Models\Version;
 use MuellerSchmitz\ModelIntegrity\Recording\ModelOptions;
 use MuellerSchmitz\ModelIntegrity\Recording\SnapshotBuilder;
-use MuellerSchmitz\ModelIntegrity\Recording\VersionRecorder;
 
 class SnapshotCommand extends Command
 {
@@ -23,7 +23,7 @@ class SnapshotCommand extends Command
 
     protected $description = 'Record a new snapshot for models whose last snapshot is outdated, e.g. after a schema change';
 
-    public function handle(SnapshotBuilder $snapshots, VersionRecorder $recorder): int
+    public function handle(SnapshotBuilder $snapshots): int
     {
         $model = $this->stringOption('model');
 
@@ -51,7 +51,7 @@ class SnapshotCommand extends Command
         $recorded = 0;
 
         foreach ($classes as $class) {
-            $recorded += $this->snapshotType($class, $snapshots, $recorder, $reason);
+            $recorded += $this->snapshotType($class, $snapshots, $reason);
         }
 
         $this->info($recorded.' '.($recorded === 1 ? 'snapshot' : 'snapshots').' recorded.');
@@ -66,7 +66,7 @@ class SnapshotCommand extends Command
      *
      * @param  class-string<Model>  $class
      */
-    private function snapshotType(string $class, SnapshotBuilder $snapshots, VersionRecorder $recorder, ?string $reason): int
+    private function snapshotType(string $class, SnapshotBuilder $snapshots, ?string $reason): int
     {
         $prototype = new $class;
         $options = ModelOptions::of($prototype);
@@ -80,17 +80,45 @@ class SnapshotCommand extends Command
                 ->orderByDesc('version')
                 ->first();
 
-            $snapshot = fn (): array => $snapshots->build($model, $options->except, $options->relations);
-
             if ($last === null) {
-                $recorder->record($model, 'created', $snapshot, $options->schemaVersion, $reason);
+                $this->record($model, 'created', $reason);
                 $recorded++;
-            } elseif ($last->schema_version < $options->schemaVersion || $snapshot() !== $last->snapshot) {
-                $recorder->record($model, 'snapshot', $snapshot, $options->schemaVersion, $reason);
+            } elseif ($last->schema_version < $options->schemaVersion || $this->differs($last, $snapshots->build($model, $options->except, $options->relations))) {
+                $this->record($model, 'snapshot', $reason);
                 $recorded++;
             }
         }
 
         return $recorded;
+    }
+
+    /**
+     * Compares like the state drift check: personal attributes decrypted,
+     * and those of a shredded subject not at all (their values are gone).
+     *
+     * @param  array<string, mixed>  $current
+     */
+    private function differs(Version $last, array $current): bool
+    {
+        $recorded = $last->revealedSnapshot();
+
+        foreach ($recorded->shredded as $attribute) {
+            $current[$attribute] = null;
+        }
+
+        return $current !== $recorded->snapshot;
+    }
+
+    /**
+     * Records through the model, which encrypts its personal attributes: a
+     * snapshot passed to the recorder directly would be stored in plain text.
+     */
+    private function record(Model $model, string $event, ?string $reason): void
+    {
+        if (! method_exists($model, 'recordIntegritySnapshot')) {
+            throw IntegrityConfigurationException::notTracked($model::class);
+        }
+
+        $model->recordIntegritySnapshot($event, $reason);
     }
 }

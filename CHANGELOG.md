@@ -8,6 +8,10 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- `model-integrity:snapshot` recorded personal attributes in plain text: it bypassed the encryption of the model, and since a plain snapshot never equals the encrypted one, it added such a version for every model with personal data on each run. It now records through the model and compares the decrypted snapshot. Versions recorded this way by 0.4.0 stay in the history and are not affected by shredding
+
 ## [0.4.0] - 2026-10-02
 
 ### Added
