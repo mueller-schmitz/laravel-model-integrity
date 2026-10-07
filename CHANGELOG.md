@@ -8,6 +8,8 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-07
+
 ### Added
 
 - Encrypted files: `IntegrityFiles::store($file, subject: $customer)` encrypts a file with the key of its data subject before it is stored (libsodium secretstream; needs `ext-sodium`). Hash and size refer to the encrypted file, so chains, anchors and file checks stay valid when the key is shredded and the file becomes unreadable
@@ -132,7 +134,8 @@ First release.
 - Commands `model-integrity:install`, `model-integrity:grants` and `model-integrity:verify` (exit code 1 on violations)
 - Tested with PHP 8.3–8.5, Laravel 12 and 13, MySQL 8.0/8.4, MariaDB 10.11/11.4, PostgreSQL 14/17 and SQLite, including parallel writers, verification during writes and a database user restricted to the printed privileges
 
-[Unreleased]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.2.0...v0.3.0
