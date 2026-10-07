@@ -32,6 +32,8 @@ use ReflectionProperty;
  * - string $integrityMode: 'versioned' | 'immutable'
  * - string $integrityDeletes: 'forbid' | 'record'
  * - list<string> $integrityExcept: attributes excluded from snapshots
+ * - list<string> $integrityOmitNull: attributes left out of snapshots while they
+ *   are null (nullable columns added later)
  * - list<string> $integrityRelations: relations whose keys are part of every snapshot
  * - int $integritySchemaVersion: version of the snapshot schema
  * - list<string> $integrityPersonal: personal attributes, recorded encrypted with
@@ -264,6 +266,18 @@ trait HasIntegrity
     }
 
     /**
+     * Attributes left out of the snapshot while they are null. A nullable
+     * column added later does not change the snapshots of existing rows this
+     * way; once it holds a value, it is recorded and compared as usual.
+     *
+     * @return list<string>
+     */
+    public function getIntegrityOmitNull(): array
+    {
+        return $this->integrityProperty('integrityOmitNull', []);
+    }
+
+    /**
      * @return list<string>
      */
     public function getIntegrityRelations(): array
@@ -364,6 +378,12 @@ trait HasIntegrity
             return $snapshot;
         }
 
+        $omitted = array_values(array_intersect($personal, $this->getIntegrityOmitNull()));
+
+        if ($omitted !== []) {
+            throw IntegrityConfigurationException::omittedPersonalAttributes($this, $omitted);
+        }
+
         $missing = array_values(array_diff($personal, array_keys($snapshot)));
 
         if ($missing !== []) {
@@ -397,7 +417,7 @@ trait HasIntegrity
      */
     protected function buildIntegritySnapshot(bool $lock = false): array
     {
-        return app(SnapshotBuilder::class)->build($this, $this->getIntegrityExcept(), $this->getIntegrityRelations(), $lock);
+        return app(SnapshotBuilder::class)->build($this, $this->getIntegrityExcept(), $this->getIntegrityRelations(), $lock, $this->getIntegrityOmitNull());
     }
 
     protected function hasRelevantIntegrityChanges(): bool

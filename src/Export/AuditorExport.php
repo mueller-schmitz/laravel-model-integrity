@@ -316,7 +316,7 @@ class AuditorExport
         foreach (StoredFile::query()->lazyById(500) as $file) {
             $stored = $file->getAttribute('created_at');
             $created = $stored instanceof DateTimeInterface || is_string($stored) ? CarbonImmutable::parse($stored)->utc() : null;
-            $csv->write([$file->sha256, $file->disk, $file->path, $file->size, $file->mime, $created, $created]);
+            $csv->write([$file->sha256, $file->disk, $file->path, $file->size, $file->mime, $file->key_id, $created, $created]);
         }
 
         $csv->close();

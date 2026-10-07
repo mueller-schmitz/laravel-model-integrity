@@ -17,6 +17,7 @@ final readonly class ModelOptions
      * @param  list<string>  $relations
      * @param  list<string>  $personal
      * @param  array<string, mixed>  $anonymized
+     * @param  list<string>  $omitNull
      */
     private function __construct(
         public array $except,
@@ -24,6 +25,7 @@ final readonly class ModelOptions
         public int $schemaVersion,
         public array $personal = [],
         public array $anonymized = [],
+        public array $omitNull = [],
     ) {}
 
     public static function of(Model $model): self
@@ -43,6 +45,7 @@ final readonly class ModelOptions
             is_int($schemaVersion) ? $schemaVersion : 1,
             method_exists($model, 'getIntegrityPersonal') ? self::strings($model->getIntegrityPersonal()) : [],
             is_array($anonymized) ? array_filter($anonymized, is_string(...), ARRAY_FILTER_USE_KEY) : [],
+            method_exists($model, 'getIntegrityOmitNull') ? self::strings($model->getIntegrityOmitNull()) : [],
         );
     }
 

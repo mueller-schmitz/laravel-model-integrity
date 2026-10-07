@@ -58,6 +58,18 @@ class IntegrityConfigurationException extends LogicException
         ));
     }
 
+    /**
+     * @param  list<string>  $attributes
+     */
+    public static function omittedPersonalAttributes(Model $model, array $attributes): self
+    {
+        return new self(sprintf(
+            'Personal attributes [%s] of [%s] cannot be left out of snapshots while they are null; remove them from $integrityOmitNull.',
+            implode(', ', $attributes),
+            $model::class,
+        ));
+    }
+
     public static function uninitializedProperty(Model $model, string $property): self
     {
         return new self(sprintf('Property [$%s] on [%s] is declared without a value; assign one or remove the declaration.', $property, $model::class));
@@ -81,5 +93,10 @@ class IntegrityConfigurationException extends LogicException
     public static function invalidConfig(string $key, string $expected): self
     {
         return new self("Config [{$key}] must be {$expected}.");
+    }
+
+    public static function missingExtension(string $extension, string $feature): self
+    {
+        return new self("The PHP extension [{$extension}] is needed for {$feature}.");
     }
 }

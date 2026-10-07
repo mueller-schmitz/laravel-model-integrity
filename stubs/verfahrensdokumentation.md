@@ -52,6 +52,7 @@ Die Anwendung [[Name]] verarbeitet die folgenden steuerlich relevanten Daten: [[
 ### 3.4 Personenbezogene Daten
 
 - Personenbezogene Attribute werden je betroffener Person verschlüsselt gespeichert. Auf Löschverlangen (Art. 17 DSGVO) wird nach Ablauf der Aufbewahrungsfristen der Schlüssel vernichtet (`model-integrity:shred`); die Kette bleibt prüfbar.
+- Dateien mit personenbezogenen Daten werden mit dem Schlüssel der betroffenen Person verschlüsselt abgelegt und sind nach der Schlüsselvernichtung nicht mehr lesbar. Unverschlüsselt abgelegte Dateien: [[Regelung]].
 - Vor Ablauf der Aufbewahrungsfrist (§ 147 AO) werden steuerlich relevante Daten nicht gelöscht: [[Regelung, Zuständigkeit]].
 - Die Anonymisierung der Anwendungstabellen erfolgt durch: [[Verfahren]].
 

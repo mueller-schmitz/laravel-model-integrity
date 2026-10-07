@@ -42,6 +42,18 @@ php artisan migrate
 
 `model-integrity:install` publishes the config and the migrations that are not published yet; running it again does not duplicate them. Prefer it over `vendor:publish --tag=model-integrity-migrations`, which copies all migrations again under new timestamps.
 
+### Upgrading from 0.4
+
+```bash
+composer require mueller-schmitz/laravel-model-integrity:^0.5
+php artisan model-integrity:install   # publishes the migration that adds integrity_files.key_id
+php artisan migrate
+```
+
+Existing versions and files are unchanged and need no new baseline; the grants stay the same. Files stored so far remain unencrypted, see [Personal data in files](#personal-data-in-files).
+
+**If you ran `model-integrity:snapshot` with 0.4.0** on models with `$integrityPersonal`: that command recorded their personal attributes in plain text. The versions it added (event `snapshot`, or `created` for rows that had no version) stay in the append-only history and are not affected by shredding. Find them with `select sequence, versionable_type, versionable_id from integrity_versions where event = 'snapshot'` and take them into account in your erasure concept. From 0.5 the command encrypts like every other recording.
+
 ### Upgrading from 0.3
 
 ```bash
@@ -167,7 +179,7 @@ The actor is reset after every queue job. By default only the default guard is a
 
 ### Files
 
-Files are stored content-addressed: under their SHA-256 hash, once per content, never overwritten and never deleted. Every stored file is recorded as a version in the global chain.
+Files are stored content-addressed: under their SHA-256 hash, once per content, never overwritten and never deleted. Every stored file is recorded as a version in the global chain. Files with personal data can be stored encrypted, see [Personal data in files](#personal-data-in-files).
 
 ```php
 use MuellerSchmitz\ModelIntegrity\Casts\AsIntegrityFile;
@@ -202,7 +214,7 @@ IntegrityFiles::find($sha256);
 - Arrays and JSON of a model contain only the hash of a file attribute. Reading the attribute loads the stored file with one query per model, and so does serializing: Eloquent casts every attribute before `toArray()`/`toJson()`. For lists and API responses, hide the attribute (`$hidden`, `makeHidden()`) and expose the hash with `getRawOriginal()`; load files with `IntegrityFiles::find()`. If the file record is missing, the attribute and its serialized value are `null`; `checkModel()` reports it.
 - `store()` reads any local path it is given: never pass paths from user input.
 - If the database transaction rolls back after the file was written, the file stays on the disk without a record. It is harmless (the same content gets the same name) and not deleted automatically.
-- Files are never deleted. Personal data in files cannot be removed until crypto-shredding arrives (planned for v0.4); keep it in mind before storing such files.
+- Files are never deleted. Store a file that holds personal data encrypted with the key of its data subject (see [Personal data in files](#personal-data-in-files)); a file stored without a subject stays readable for good.
 
 ### Personal data and crypto-shredding
 
@@ -244,7 +256,53 @@ $version->revealedSnapshot()->shredded;   // the attributes whose key was shredd
 - `reason` and `context` are stored in plain text: never put personal data there. Versions recorded before the attributes were declared personal (or before 0.4) keep them in plain text and are not affected by shredding.
 - Rotating `APP_KEY`: old wraps stay readable through `APP_PREVIOUS_KEYS`. Removing a previous key makes every key wrapped with it unreadable – the same as shredding all those subjects – and verification reports their personal data as unreadable.
 - A key removed or cleared outside the package (without shredding) is reported, not taken for a shredding.
-- **Limits:** the keys live in the same database, so backups contain them until those backups expire – shredding is complete only then. Logs, caches, queues, search indexes and copies outside the integrity tables are not covered. Files stored with `IntegrityFiles` are not encrypted.
+- **Limits:** the keys live in the same database, so backups contain them until those backups expire – shredding is complete only then. Logs, caches, queues, search indexes and copies outside the integrity tables are not covered. Files are covered only if they were stored for a subject (next section).
+
+### Personal data in files
+
+Files are never deleted either. Store a file that holds personal data for its data subject: it is encrypted with the subject's key before it is written to the storage disk, and shredding the key makes it unreadable.
+
+```php
+$file = IntegrityFiles::store($request->file('contract'), subject: $customer);   // a model, or '<morph class>:<key>'
+$contract->update(['document' => $file]);
+
+$file->isEncrypted();   // true
+$file->contents();      // decrypted, like readStream()
+
+IntegritySubjects::shred($customer, 'Erasure request #42');
+
+$file->isShredded();    // true
+$file->contents();      // throws a ShreddedSubjectException
+```
+
+- Encrypted files need the PHP extension `sodium`. Files stored without a subject do not.
+- Hash, size and path describe the **encrypted** file as it lies on the disk, and that hash is what the file attribute of a model and its snapshots hold. Verification therefore needs no key and stays valid after shredding; the encrypted file remains on the disk.
+- The key of an encrypted file (`key_id`) is part of the file's snapshot: a swapped or removed key is reported as `StateDrift`.
+- Encrypted files are not stored once per content. Every `store()` encrypts with a new random salt, so equal files cannot be recognized by their hashes. Do not record the hash of the plain file elsewhere: for a document with little variation it would confirm a guess of its content.
+- A shredded subject cannot get new files; `store()` throws a `ShreddedSubjectException`.
+- Pass the subject that the models of this person use (the model `integritySubject()` returns, e.g. the customer and not the order), otherwise shredding the person misses the file. The package does not check this. A subject given as a string must have the form `<morph class>:<key>`.
+- `readStream()` decrypts into a temporary stream (`php://temp`: in memory, beyond 2 MB in a temporary file that is removed when the stream is closed). MIME type and size are stored in plain text; the MIME type is detected from the plain file, the size is that of the encrypted file (45 bytes plus 17 bytes per 64 KiB more than the plain file).
+- Files stored without a subject stay unencrypted and cannot be shredded later. Storing the content again with a subject adds an encrypted file, but the plain one remains: decide before the first upload.
+- While a file is stored, its plain content lies in the temporary directory of the server: the upload itself, and a copy of a stream passed to `store()`. Both are removed at the end, but not when the process is killed; clean that directory as for any upload.
+- `checkFiles()` and `verify --files` also open every encrypted file with its key. This reports a key that was replaced or removed in the database, which no snapshot would show.
+- The limits above apply here as well: keys in backups, and copies outside the file store such as a download cache.
+
+### File encryption format
+
+Encrypted files use format `1`. A released format never changes; new rules always get a new format number. It is specified here so that a file can be decrypted without this package, given the key of its data subject:
+
+| Bytes | Content |
+|---|---|
+| 4 | `MIFE` (ASCII) |
+| 1 | format, `0x01` |
+| 16 | salt, random per file |
+| 24 | header of the libsodium secretstream |
+| rest | encrypted chunks |
+
+- File key: HKDF-SHA256 (RFC 5869) over the subject key (32 bytes) with the salt and the info `model-integrity/file/1`, 32 bytes long. The subject key is the value of `integrity_subject_keys.key`, decrypted with the application key (`Crypt::decryptString()`) and base64-decoded.
+- Content: libsodium's `crypto_secretstream_xchacha20poly1305`, without additional data. The plain file is split into chunks of 65536 bytes; each becomes 17 bytes longer. The last chunk – the only one that may be shorter, and empty for an empty file – carries `TAG_FINAL`, all others `TAG_MESSAGE`. A file that ends without a final chunk or continues after it is invalid.
+
+Reference files with their key are part of the test suite in the repository (`tests/Fixtures/file-format-1`).
 
 ### Relations
 
@@ -276,6 +334,8 @@ php artisan model-integrity:snapshot --all
 ```
 
 The command records a `snapshot` version for every model whose last snapshot has an older `$integritySchemaVersion` or no longer matches the row, and a `created` version for rows that have none. Bump `$integritySchemaVersion` with the change so the history shows when the structure changed. For a single model: `$invoice->recordIntegritySnapshot('schema_migrated', 'Added reference column')`.
+
+A new nullable column needs no baseline if you list it in `$integrityOmitNull` before the migration runs (`protected array $integrityOmitNull = ['reference'];`): it stays out of the snapshot while it is `null`, so existing rows keep matching their last snapshot, and it is recorded as soon as it holds a value. This does not help for a column that was already recorded as `null`, and it cannot be combined with `$integrityPersonal`.
 
 Datetime columns without a timezone are interpreted in the application timezone when they are read. Do not change `app.timezone` after the first version was recorded, or every stored timestamp would drift. Plain `date` casts are stored as `Y-m-d` and are not affected.
 
@@ -354,7 +414,7 @@ Schedule::command('model-integrity:verify')->dailyAt('03:00')->emailOutputOnFail
 | `TruncatedChain` | A head (global or per model) does not match the last version: the end was cut off, the head is behind the last version, or it was removed; or an anchor attests versions beyond the end of the chain |
 | `StateDrift` | The current row differs from the last snapshot, was deleted or restored outside the application, or was never recorded |
 | `Unverifiable` | Versions exist whose model class is missing, does not use the trait, or was recorded under a former morph class |
-| `FileMismatch` | A file referenced by any version is unknown, missing on its disk or has another size; with `checkFiles()`/`--files` also a changed content |
+| `FileMismatch` | A file referenced by any version is unknown, missing on its disk or has another size; with `checkFiles()`/`--files` also a changed content, or an encrypted file that does not open with the key of its data subject |
 | `AnchorMismatch` | An anchor does not match the versions it attests, its proof, the previous anchor or the anchors head |
 
 Every model check verifies that the files referenced by a model's versions exist with their recorded size. Hashing the content reads every file, so it only runs with `checkFiles()` or `verify --files`, for example weekly in the scheduler.

@@ -89,6 +89,23 @@ class SubjectKeys
     }
 
     /**
+     * Whether the key with this id is usable right now, regardless of the
+     * transaction's snapshot and of keys read before. Under the global head
+     * lock the answer holds until the lock is released: shredding takes it.
+     */
+    public function isActive(string $id): bool
+    {
+        $connection = $this->connection();
+        $query = $connection->table($this->table())->where('id', $id);
+
+        if (in_array($connection->getDriverName(), ['mysql', 'mariadb'], true)) {
+            $query->sharedLock();
+        }
+
+        return $query->value('key') !== null;
+    }
+
+    /**
      * The id of the subject's key row, also after shredding; null if the subject never had one.
      */
     public function keyIdFor(string $subject): ?string

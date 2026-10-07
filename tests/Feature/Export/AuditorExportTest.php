@@ -13,6 +13,7 @@ use MuellerSchmitz\ModelIntegrity\Anchoring\VersionHashes;
 use MuellerSchmitz\ModelIntegrity\Export\AuditorExport;
 use MuellerSchmitz\ModelIntegrity\Export\GdpduDtd;
 use MuellerSchmitz\ModelIntegrity\Export\Table;
+use MuellerSchmitz\ModelIntegrity\Facades\IntegrityFiles;
 use MuellerSchmitz\ModelIntegrity\Facades\IntegritySubjects;
 use MuellerSchmitz\ModelIntegrity\Hashing\CanonicalSerializer;
 use MuellerSchmitz\ModelIntegrity\Hashing\Hasher;
@@ -138,6 +139,26 @@ it('exports personal data encrypted and, unless disabled, revealed', function ()
     expect(File::get($this->directory.'/versions.csv'))->not->toContain('Ada Lovelace')->not->toContain('snapshot_revealed')
         ->and(File::get($this->directory.'/versions.jsonl'))->not->toContain('Ada Lovelace')
         ->and(File::get($this->directory.'/index.xml'))->not->toContain('snapshot_revealed');
+});
+
+it('lists stored files as they lie on the disk, with the key of encrypted files', function (): void {
+    Storage::fake('integrity');
+    config(['model-integrity.files.disk' => 'integrity']);
+
+    $path = tempnam(sys_get_temp_dir(), 'mi');
+    file_put_contents($path, 'Contract of Ada Lovelace');
+    $plain = IntegrityFiles::store($path);
+    $encrypted = IntegrityFiles::store($path, subject: $this->customer);
+    @unlink($path);
+
+    expect(export($this->directory))->toBe(0);
+
+    $rows = collect(csvRows($this->directory.'/files.csv'))->keyBy('sha256');
+
+    expect($rows)->toHaveCount(2)
+        ->and($rows[$plain->sha256]['key_id'])->toBe('')
+        ->and($rows[$encrypted->sha256]['key_id'])->toBe($encrypted->key_id)
+        ->and($rows[$encrypted->sha256]['size'])->toBe((string) $encrypted->size);
 });
 
 it('leaves shredded personal data empty in the revealed snapshot', function (): void {

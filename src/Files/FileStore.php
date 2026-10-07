@@ -7,6 +7,7 @@ namespace MuellerSchmitz\ModelIntegrity\Files;
 use finfo;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Database\Connection;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
@@ -16,8 +17,12 @@ use Illuminate\Support\Str;
 use InvalidArgumentException;
 use MuellerSchmitz\ModelIntegrity\Events\IntegrityViolationDetected;
 use MuellerSchmitz\ModelIntegrity\Exceptions\IntegrityConfigurationException;
+use MuellerSchmitz\ModelIntegrity\Exceptions\ShreddedSubjectException;
 use MuellerSchmitz\ModelIntegrity\Models\StoredFile;
 use MuellerSchmitz\ModelIntegrity\Recording\ChainName;
+use MuellerSchmitz\ModelIntegrity\Shredding\SubjectKey;
+use MuellerSchmitz\ModelIntegrity\Shredding\SubjectKeys;
+use MuellerSchmitz\ModelIntegrity\Shredding\SubjectName;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityError;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityErrorType;
 use MuellerSchmitz\ModelIntegrity\Verification\IntegrityResult;
@@ -33,17 +38,50 @@ use Throwable;
  * head is not locked during the upload. Writes go to a temporary name and are
  * moved into place, so an aborted write never leaves a partial file under the
  * final name.
+ *
+ * With a data subject, the file is encrypted with the subject's key before
+ * it is stored: hash, size and path refer to the encrypted file, so they
+ * stay valid when the key is shredded and the content becomes unreadable.
+ * Encrypted files are not deduplicated; equal ciphertexts would reveal
+ * equal contents.
+ *
+ * The first file of a subject creates its key, which records a version: in
+ * a transaction of the caller, the chain head then stays locked during the
+ * upload, until that transaction ends.
  */
 class FileStore
 {
+    public function __construct(
+        private readonly FileCipher $cipher,
+    ) {}
+
     /**
      * @param  SplFileInfo|string|resource  $file  an uploaded file, a file object, a local path or a readable stream
+     * @param  Model|string|null  $subject  the data subject (model or `<morph class>:<key>`) whose key encrypts the file
+     *
+     * @throws ShreddedSubjectException if the subject was shredded
      */
-    public function store(mixed $file, ?string $mime = null): StoredFile
+    public function store(mixed $file, ?string $mime = null, Model|string|null $subject = null): StoredFile
     {
-        [$path, $temporary] = $this->localPath($file);
+        $subject = $subject === null ? null : $this->subjectName($subject);
+
+        if ($subject !== null) {
+            // Before the subject gets a key that could not be used.
+            $this->cipher->ensureSupported();
+        }
+
+        [$plain, $temporary] = $this->localPath($file);
+        $path = $plain;
+        $key = null;
 
         try {
+            if ($subject !== null) {
+                // Creating a key records a version of its own, so the key is
+                // resolved before the file is recorded.
+                $key = app(SubjectKeys::class)->keyFor($subject);
+                $path = $this->encryptToTemporaryFile($plain, $key);
+            }
+
             $sha256 = hash_file('sha256', $path);
             $size = filesize($path);
 
@@ -59,7 +97,7 @@ class FileStore
             $recorded = $this->find($sha256) !== null;
             $wasMissing = $this->ensureOnDisk(Storage::disk($diskName), $diskName, $target, $path, $sha256);
 
-            $file = $this->record($sha256, $diskName, $target, $size, $mime ?? $this->detectMime($path));
+            $file = $this->record($sha256, $diskName, $target, $size, $mime ?? $this->detectMime($plain), $key?->id, $subject);
 
             if ($recorded && $wasMissing) {
                 $this->reportFileProblem("File [{$target}] on disk [{$diskName}] was missing and has been restored.");
@@ -68,6 +106,10 @@ class FileStore
             return $file;
         } finally {
             if ($temporary) {
+                @unlink($plain);
+            }
+
+            if ($path !== $plain) {
                 @unlink($path);
             }
         }
@@ -134,11 +176,11 @@ class FileStore
         return $wasMissing;
     }
 
-    private function record(string $sha256, string $disk, string $path, int $size, ?string $mime): StoredFile
+    private function record(string $sha256, string $disk, string $path, int $size, ?string $mime, ?string $keyId, ?string $subject): StoredFile
     {
         $connection = $this->connection();
 
-        return $connection->transaction(function () use ($connection, $sha256, $disk, $path, $size, $mime): StoredFile {
+        return $connection->transaction(function () use ($connection, $sha256, $disk, $path, $size, $mime, $keyId, $subject): StoredFile {
             // The global head lock serializes stores of the same content without
             // locking integrity_files, on which the application may only INSERT.
             $head = $connection->table(Config::string('model-integrity.tables.heads'))
@@ -154,6 +196,13 @@ class FileStore
                 return $existing;
             }
 
+            // Shredding holds the head lock as well: a subject shredded since
+            // its key was read gets no file that nobody could ever read. The
+            // encrypted file stays on the disk without a record.
+            if ($keyId !== null && ! app(SubjectKeys::class)->isActive($keyId)) {
+                throw ShreddedSubjectException::noKey((string) $subject);
+            }
+
             try {
                 return StoredFile::query()->create([
                     'sha256' => $sha256,
@@ -161,6 +210,8 @@ class FileStore
                     'path' => $path,
                     'size' => $size,
                     'mime' => $mime,
+                    // Files without encryption are stored as before the column existed.
+                    ...($keyId === null ? [] : ['key_id' => $keyId]),
                 ]);
             } catch (UniqueConstraintViolationException $e) {
                 // The caller's transaction read earlier, so under REPEATABLE READ
@@ -280,6 +331,63 @@ class FileStore
         }
 
         return $path;
+    }
+
+    /**
+     * A name without a type would create a subject that shredding the person
+     * never reaches, e.g. when a bare key is passed.
+     */
+    private function subjectName(Model|string $subject): string
+    {
+        if ($subject instanceof Model) {
+            return SubjectName::of($subject);
+        }
+
+        if (preg_match('/^[^:]+:.+$/s', $subject) !== 1) {
+            throw new InvalidArgumentException("The data subject [{$subject}] must be a model or its `<morph class>:<key>`.");
+        }
+
+        return $subject;
+    }
+
+    private function encryptToTemporaryFile(string $path, SubjectKey $key): string
+    {
+        $encrypted = tempnam(sys_get_temp_dir(), 'model-integrity-');
+
+        if ($encrypted === false) {
+            throw new RuntimeException('Cannot create a temporary file.');
+        }
+
+        $source = fopen($path, 'rb');
+        $target = fopen($encrypted, 'wb');
+
+        try {
+            if ($source === false || $target === false) {
+                throw new RuntimeException("Cannot encrypt file [{$path}] to a temporary file.");
+            }
+
+            $this->cipher->encrypt($source, $target, $key->key);
+        } catch (Throwable $e) {
+            foreach ([$source, $target] as $stream) {
+                if (is_resource($stream)) {
+                    fclose($stream);
+                }
+            }
+
+            @unlink($encrypted);
+
+            throw $e;
+        }
+
+        fclose($source);
+
+        if (! fclose($target)) {
+            @unlink($encrypted);
+
+            throw new RuntimeException("Cannot encrypt file [{$path}] to a temporary file.");
+        }
+
+        return $encrypted;
     }
 
     private function detectMime(string $path): ?string

@@ -63,6 +63,7 @@ it('publishes the migrations under its tag in dependency order', function (): vo
             'create_integrity_anchors_tables.php',
             'create_integrity_anchors_append_only_triggers.php',
             'create_integrity_subject_keys_table.php',
+            'add_key_id_to_integrity_files_table.php',
         ]);
 });
 

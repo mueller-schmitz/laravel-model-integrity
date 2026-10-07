@@ -201,6 +201,28 @@ it('lets the application record personal data, shred a subject and verify', func
         ->toThrow(QueryException::class, $this->restricted->getDriverName() === 'pgsql' ? 'permission denied' : 'denied');
 });
 
+it('lets the application store, read and shred encrypted files', function (): void {
+    config(['model-integrity.connection' => 'mi_restricted']);
+    Storage::fake('integrity');
+    config(['model-integrity.files.disk' => 'integrity']);
+    $path = tempnam(sys_get_temp_dir(), 'mi');
+    file_put_contents($path, 'restricted personal upload');
+
+    $customer = Customer::on('mi_restricted')->create(['number' => 'C-1', 'name' => 'deleted']);
+    $file = IntegrityFiles::store($path, subject: $customer);
+    Contract::on('mi_restricted')->create(['title' => 'Lease', 'document' => $file]);
+
+    expect($file->contents())->toBe('restricted personal upload');
+
+    IntegritySubjects::shred($customer, 'request #43');
+
+    expect($file->isShredded())->toBeTrue()
+        ->and(app(IntegrityChecker::class)->checkAll()->errors()->map(fn ($e) => (string) $e)->all())->toBe([])
+        ->and(app(IntegrityChecker::class)->checkFiles()->passes())->toBeTrue()
+        ->and(fn () => $this->restricted->table('integrity_files')->update(['key_id' => null]))
+        ->toThrow(QueryException::class, $this->restricted->getDriverName() === 'pgsql' ? 'permission denied' : 'denied');
+});
+
 it('allows the shared lock the file store uses to find committed records on MySQL and MariaDB', function (): void {
     $this->restricted->transaction(function (): void {
         expect($this->restricted->table('integrity_files')->where('sha256', str_repeat('a', 64))->sharedLock()->first())->toBeNull();
