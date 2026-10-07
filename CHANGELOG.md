@@ -8,6 +8,12 @@ While the version is below 1.0.0, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-07
+
+### Fixed
+
+- `model-integrity:snapshot` recorded personal attributes in plain text: it bypassed the encryption of the model, and since a plain snapshot never equals the encrypted one, it added such a version for every model with personal data on each run. It now records through the model and compares the decrypted snapshot. Versions recorded this way by 0.4.0 stay in the append-only history and are not affected by shredding: find them with `select sequence, versionable_type, versionable_id from integrity_versions where event = 'snapshot'` (or `created` for rows the command backfilled) and take them into account in your erasure concept
+
 ## [0.4.0] - 2026-10-02
 
 ### Added
@@ -105,7 +111,8 @@ First release.
 - Commands `model-integrity:install`, `model-integrity:grants` and `model-integrity:verify` (exit code 1 on violations)
 - Tested with PHP 8.3–8.5, Laravel 12 and 13, MySQL 8.0/8.4, MariaDB 10.11/11.4, PostgreSQL 14/17 and SQLite, including parallel writers, verification during writes and a database user restricted to the printed privileges
 
-[Unreleased]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mueller-schmitz/laravel-model-integrity/compare/v0.1.1...v0.2.0

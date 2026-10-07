@@ -100,7 +100,7 @@ trait HasIntegrity
     }
 
     /**
-     * @param  array<string, mixed>  $options
+     * @param  array{touch?: bool|null}  $options
      */
     public function save(array $options = []): bool
     {
